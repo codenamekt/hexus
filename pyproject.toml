@@ -1,0 +1,67 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hermes-memory-pgvector"
+version = "0.3.0"
+description = "Postgres + pgvector memory provider plugin for hermes-agent. Multi-agent storage layer with per-minion themes, async writer, no LLM in the memory hot path."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "BSD-3-Clause" }
+authors = [
+    { name = "Andrea Borghi" },
+]
+keywords = [
+    "hermes-agent",
+    "memory-provider",
+    "pgvector",
+    "postgres",
+    "multi-agent",
+    "llm-memory",
+    "semantic-search",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
+    "License :: OSI Approved :: BSD License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Database",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: System :: Distributed Computing",
+]
+
+# Runtime dependencies. Upper bounds per the hermes-agent supply-chain
+# pinning policy (CONTRIBUTING.md, "Dependency pinning policy").
+dependencies = [
+    "psycopg[binary]>=3.3.4,<4",
+    "psycopg-pool>=3.3.1,<4",
+    "PyYAML>=6.0,<7",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=7.4,<9",
+]
+
+[project.urls]
+Homepage      = "https://github.com/andreab67/hermes-memory-pgvector"
+Source        = "https://github.com/andreab67/hermes-memory-pgvector"
+Issues        = "https://github.com/andreab67/hermes-memory-pgvector/issues"
+Roadmap       = "https://github.com/andreab67/hermes-memory-pgvector/blob/main/ROADMAP.md"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where   = ["."]
+include = ["pgvector*"]
+exclude = ["tests*"]
+
+[tool.setuptools.package-data]
+pgvector = ["plugin.yaml", "migrations/*.sql"]
