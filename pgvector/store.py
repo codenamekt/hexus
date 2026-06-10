@@ -26,7 +26,10 @@ import psycopg
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 
-from .embed import to_pgvector_literal
+try:
+    from .embed import to_pgvector_literal
+except ImportError:
+    from embed import to_pgvector_literal
 
 logger = logging.getLogger(__name__)
 
