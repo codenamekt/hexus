@@ -15,14 +15,8 @@ PG_TEST_EMBED_URL is unset.
 from __future__ import annotations
 
 import os
-import sys
-from pathlib import Path
 
 import pytest
-
-# Import sibling modules without going through hermes-agent's package
-# system (which isn't on the sys.path during workstation testing).
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 
 # ---------------------------------------------------------------------------
@@ -30,7 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 # ---------------------------------------------------------------------------
 
 def test_pgvector_literal_roundtrip():
-    from embed import to_pgvector_literal
+    from pgvector.embed import to_pgvector_literal
 
     lit = to_pgvector_literal([0.1, -0.25, 0.333333])
     assert lit.startswith("[") and lit.endswith("]")
@@ -38,7 +32,7 @@ def test_pgvector_literal_roundtrip():
 
 
 def test_embed_empty_input_raises():
-    from embed import embed, EmbeddingError
+    from pgvector.embed import embed, EmbeddingError
 
     with pytest.raises(EmbeddingError):
         embed("", base_url="http://localhost:11434")
@@ -51,7 +45,7 @@ def test_embed_empty_input_raises():
     reason="PG_TEST_EMBED_URL not set",
 )
 def test_embed_live_returns_768_dims():
-    from embed import embed
+    from pgvector.embed import embed
 
     base_url = os.environ["PG_TEST_EMBED_URL"]
     vec = embed("hello world", base_url=base_url, model="nomic-embed-text")
@@ -74,7 +68,7 @@ def store():
     if not dsn:
         pytest.skip("PG_TEST_DSN not set")
 
-    from store import MemoryStore
+    from pgvector.store import MemoryStore
 
     s = MemoryStore(dsn)
     s.ensure_schema()

@@ -37,9 +37,14 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from agent.memory_provider import MemoryProvider
-from tools.registry import tool_error
-from hermes_cli.config import cfg_get
+try:
+    from agent.memory_provider import MemoryProvider
+    from tools.registry import tool_error
+    from hermes_cli.config import cfg_get
+except ImportError:  # pragma: no cover - standalone smoke tests do not install hermes-agent
+    MemoryProvider = None  # type: ignore[assignment]
+    tool_error = None  # type: ignore[assignment]
+    cfg_get = None  # type: ignore[assignment]
 
 from .embed import embed, EmbeddingError
 from .store import MemoryStore
@@ -179,6 +184,8 @@ def _load_plugin_config() -> dict:
         import yaml
         with open(config_path, encoding="utf-8-sig") as fh:
             data = yaml.safe_load(fh) or {}
+        if cfg_get is None:
+            return {}
         return cfg_get(data, "plugins", "pgvector", default={}) or {}
     except Exception:  # noqa: BLE001
         return {}
@@ -188,10 +195,15 @@ def _load_plugin_config() -> dict:
 # Provider
 # ---------------------------------------------------------------------------
 
-class PgvectorMemoryProvider(MemoryProvider):
+class PgvectorMemoryProvider(MemoryProvider or object):
     """Postgres mirror of built-in memory entries, with semantic recall."""
 
     def __init__(self, config: dict | None = None):
+        if MemoryProvider is None:
+            raise RuntimeError(
+                "PgvectorMemoryProvider requires Hermes Agent internals; "
+                "install this package inside Hermes Agent to use the provider."
+            )
         self._config = {**DEFAULTS, **(config or {})}
         self._store: Optional[MemoryStore] = None
         self._writer: Optional[AsyncWriter] = None
