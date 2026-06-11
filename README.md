@@ -409,11 +409,16 @@ See [`ROADMAP.md`](ROADMAP.md) for the full milestone table. Highlights:
 - **M2 (v0.2)** ✅ Conversation transcript table with `sync_turn` capture + `recall_conversation` tool
 - **M3 (v0.3)** ✅ Identity propagation for stateless API minions via `X-Hermes-Session-Key`
 - **M3.5 (v0.4 fork)** ✅ Local BERT swap (MiniLM-L6-v2, 384-dim) + MCP server (`memory-pgvector-mcp serve`) for non-hermes clients
-- **M4 (v0.5 fork)** ⏳ `on_delegation()` + `on_session_end()` capture for agent-of-agents observability
-- **M5 (v0.6–v0.7 fork)** ⏳ TTL/decay, partial HNSW indexes per-theme, metrics, bulk-import CLI, PyPI publish
-- **M6 (v1.0)** ⏳ Stable config schema, full docs, CI coverage
+- **M4 (v0.5 fork)** ⏳ Hybrid search, temporal decay, TTL/memory decay tool — [see upcoming features](UPCOMING.md)
+- **M5 (v0.6 fork)** ⏳ Entity tagging, co-occurrence graph, confidence scoring, session summaries
+- **M6 (v0.7 fork)** ⏳ Cross-encoder reranker, event webhooks, PyPI/GHCR publish
+- **M7 (v1.0)** ⏳ Stable config schema, full docs, CI coverage
 
 The roadmap exists so the multi-agent positioning isn't a one-off claim — each milestone has to pass the test *"does this make N cooperating agents more capable?"* before it lands. The `What's not on the roadmap` section in `ROADMAP.md` lists what was deliberately rejected (LLM-mediated dialectic, fact-store ontologies, background derivers, in-plugin RBAC) so the boundaries are explicit.
+
+## Upcoming Features
+
+See [`UPCOMING.md`](UPCOMING.md) for a detailed breakdown of 9 planned features across 3 phases — from hybrid search (BM25 + vector) to entity co-occurrence graphs and conversation summaries. Every feature is designed for **dual-surface availability**: each ships as both an MCP tool and a Hermes memory plugin tool, backed by a single shared implementation in `MemoryStore`.
 
 ## Rollback
 
