@@ -15,8 +15,35 @@ PG_TEST_EMBED_URL is unset.
 from __future__ import annotations
 
 import os
+from typing import cast
 
 import pytest
+
+
+def test_config_env_expansion_supports_shell_forms(monkeypatch):
+    from pgvector import _expand_config_vars
+
+    monkeypatch.setenv("MEMORY_PGVECTOR_DB_NAME", "hermes_memory")
+    monkeypatch.setenv("MEMORY_PGVECTOR_DB_USER", "hermes_memory")
+    monkeypatch.setenv("MEMORY_PGVECTOR_DB_PASS", "secret")
+
+    cfg = cast(dict[str, str], _expand_config_vars(
+        {
+            "dsn": (
+                "host=homelab-db "
+                "dbname=${MEMORY_PGVECTOR_DB_NAME:-hermes_memory} "
+                "user=${MEMORY_PGVECTOR_DB_USER:?missing db user} "
+                "password=${MEMORY_PGVECTOR_DB_PASS}"
+            )
+        }
+    ))
+
+    assert cfg["dsn"] == (
+        "host=homelab-db "
+        "dbname=hermes_memory "
+        "user=hermes_memory "
+        "password=secret"
+    )
 
 
 # ---------------------------------------------------------------------------

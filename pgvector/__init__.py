@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -215,9 +216,50 @@ def _load_plugin_config() -> dict:
             data = yaml.safe_load(fh) or {}
         if cfg_get is None:
             return {}
-        return cfg_get(data, "plugins", "pgvector", default={}) or {}
+        expanded = _expand_config_vars(cfg_get(data, "plugins", "pgvector", default={}) or {})
+        return expanded if isinstance(expanded, dict) else {}
     except Exception:  # noqa: BLE001
         return {}
+
+
+def _expand_config_vars(obj):
+    """Expand env references in plugin config values.
+
+    Hermes's normal config loader expands plain ``${VAR}`` references, but
+    this plugin reads the YAML directly so it can run before Hermes has
+    necessarily loaded the expanded config. Support both plain references and
+    the shell-style forms already used by the homelab config:
+
+      ``${VAR}``        → env value or unchanged placeholder
+      ``${VAR:-default}`` → env value or default
+      ``${VAR:?message}`` → env value or ValueError
+    """
+    if isinstance(obj, str):
+        return _ENV_REF_RE.sub(_expand_env_match, obj)
+    if isinstance(obj, dict):
+        return {key: _expand_config_vars(value) for key, value in obj.items()}
+    if isinstance(obj, list):
+        return [_expand_config_vars(value) for value in obj]
+    return obj
+
+
+_ENV_REF_RE = re.compile(r"\$\{([^}:]+)(?::([\-?])((?:[^}]|\\})+))?\}")
+
+
+def _expand_env_match(match: re.Match[str]) -> str:
+    name = match.group(1)
+    op = match.group(2)
+    payload = match.group(3) or ""
+
+    value = os.environ.get(name)
+    if value is not None:
+        return value
+    if op == "-":
+        return payload.replace("\\}", "}")
+    if op == "?":
+        message = payload.replace("\\}", "}")
+        raise ValueError(f"missing required environment variable {name}: {message}")
+    return match.group(0)
 
 
 # ---------------------------------------------------------------------------
