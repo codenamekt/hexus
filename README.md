@@ -307,6 +307,8 @@ hermes memory status                       # expect: Provider: hexus; Status: av
 
 ## Configuration
 
+For details on hybrid search relevance parameters (such as `vector_weight`, `text_weight`, `decay_half_life_days`, and `recall_boost_weight`), see the [Hybrid Search & Relevance Tuning Guide](docs/HYBRID_SEARCH.md).
+
 Lives in `$HERMES_HOME/config.yaml` under `plugins.hexus` — every value optional, sensible defaults shown:
 
 ```yaml
