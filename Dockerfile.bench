@@ -1,0 +1,2 @@
+FROM memory-pgvector:test
+COPY benchmark.py /app/benchmark.py
