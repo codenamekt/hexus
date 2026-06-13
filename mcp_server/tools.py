@@ -569,3 +569,116 @@ def memory_hybrid_recall_turns(store: MemoryStore, args: Dict[str, Any]) -> Dict
         "count": len(rows),
         "results": [_row_to_dict(r) for r in rows],
     }
+
+
+def memory_record_delegation(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
+    """Record a subagent delegation.
+
+    args:
+      parent_session_id: str
+      child_session_id:  str
+      task:              str
+      result:            str
+      agent_identity:    str | None
+      metadata:          dict | None
+    """
+    parent_session_id = args.get("parent_session_id")
+    if not isinstance(parent_session_id, str) or not parent_session_id.strip():
+        raise ValueError("parent_session_id must be a non-empty string")
+
+    child_session_id = args.get("child_session_id")
+    if not isinstance(child_session_id, str) or not child_session_id.strip():
+        raise ValueError("child_session_id must be a non-empty string")
+
+    task = args.get("task")
+    if not isinstance(task, str) or not task.strip():
+        raise ValueError("task must be a non-empty string")
+
+    result = args.get("result") or ""
+
+    agent = args.get("agent_identity")
+    if isinstance(agent, str) and agent.strip() == "":
+        agent = "default"
+    elif not agent:
+        agent = "default"
+
+    metadata = args.get("metadata") or {}
+
+    combined_text = f"Task: {task}\nResult: {result}"
+    try:
+        vec = embed(combined_text)
+    except EmbeddingError:
+        vec = None
+
+    row_id = store.record_delegation(
+        parent_session_id=parent_session_id,
+        child_session_id=child_session_id,
+        agent_identity=agent,
+        task=task,
+        result=result,
+        embedding=vec,
+        metadata=metadata,
+    )
+    return {
+        "id": row_id,
+        "parent_session_id": parent_session_id,
+        "child_session_id": child_session_id,
+        "agent_identity": agent,
+    }
+
+
+def memory_recall_delegations(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
+    """Recall subagent delegations.
+
+    args:
+      query:                str
+      top_k:                int (default 5, cap 100)
+      agent_identity:       str | None
+      parent_session_id:    str | None
+      min_similarity:       float (default 0.0)
+      decay_half_life_days: float (default 0.0)
+      recall_boost_weight:  float (default 0.0)
+    """
+    query = args.get("query")
+    if not isinstance(query, str) or not query.strip():
+        raise ValueError("query must be a non-empty string")
+
+    top_k = int(args.get("top_k", 5))
+    top_k = max(1, min(top_k, 100))
+
+    agent = args.get("agent_identity")
+    if isinstance(agent, str) and agent.strip() == "":
+        agent = None
+
+    parent_session_id = args.get("parent_session_id")
+    if isinstance(parent_session_id, str) and parent_session_id.strip() == "":
+        parent_session_id = None
+
+    min_similarity = float(args.get("min_similarity", 0.0))
+    min_similarity = max(0.0, min(min_similarity, 1.0))
+
+    decay_half_life_days = float(args.get("decay_half_life_days", 0.0))
+    decay_half_life_days = max(0.0, decay_half_life_days)
+
+    recall_boost_weight = float(args.get("recall_boost_weight", 0.0))
+    recall_boost_weight = max(0.0, recall_boost_weight)
+
+    try:
+        vec = embed(query)
+    except EmbeddingError as exc:
+        return {"query": query, "count": 0, "results": [], "error": str(exc)}
+
+    rows = store.search_delegations(
+        query_embedding=vec,
+        agent_identity=agent,
+        parent_session_id=parent_session_id,
+        limit=top_k,
+        min_similarity=min_similarity,
+        decay_half_life_days=decay_half_life_days,
+        recall_boost_weight=recall_boost_weight,
+    )
+    return {
+        "query": query,
+        "count": len(rows),
+        "results": [_row_to_dict(r) for r in rows],
+    }

@@ -323,6 +323,75 @@ def _build_server(
         )
 
     @mcp.tool()
+    def memory_record_delegation(
+        parent_session_id: str,
+        child_session_id: str,
+        task: str,
+        result: str,
+        agent_identity: str = "",
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Record a subagent delegation.
+
+        Args:
+          parent_session_id: parent session ID delegating the task.
+          child_session_id: child session ID executing the task.
+          task: task description prompt.
+          result: task output response.
+          agent_identity: agent identity/theme.
+          metadata: optional dict metadata.
+
+        Returns: {"id", "parent_session_id", "child_session_id", "agent_identity"}
+        """
+        return tools.memory_record_delegation(
+            store,
+            {
+                "parent_session_id": parent_session_id,
+                "child_session_id": child_session_id,
+                "task": task,
+                "result": result,
+                "agent_identity": agent_identity,
+                "metadata": metadata,
+            },
+        )
+
+    @mcp.tool()
+    def memory_recall_delegations(
+        query: str,
+        top_k: int = 5,
+        agent_identity: str = "",
+        parent_session_id: str = "",
+        min_similarity: float = 0.0,
+        decay_half_life_days: float = 0.0,
+        recall_boost_weight: float = 0.0,
+    ) -> Dict[str, Any]:
+        """Recall subagent delegations by semantic similarity query.
+
+        Args:
+          query: natural-language search query.
+          top_k: max results to return.
+          agent_identity: scope search to specific agent theme.
+          parent_session_id: scope search to specific parent session.
+          min_similarity: similarity score threshold.
+          decay_half_life_days: temporal decay half life parameter.
+          recall_boost_weight: recall boost parameter.
+
+        Returns: {"query", "count", "results": [{id, parent_session_id, child_session_id, agent_identity, task, result, score, ts, metadata}]}
+        """
+        return tools.memory_recall_delegations(
+            store,
+            {
+                "query": query,
+                "top_k": top_k,
+                "agent_identity": agent_identity,
+                "parent_session_id": parent_session_id,
+                "min_similarity": min_similarity,
+                "decay_half_life_days": decay_half_life_days,
+                "recall_boost_weight": recall_boost_weight,
+            },
+        )
+
+    @mcp.tool()
     def memory_count(
         agent_identity: str = "",
         target: str = "",

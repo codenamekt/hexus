@@ -42,12 +42,14 @@ wait_for_tcp() {
 
 wait_for_schema() {
     dsn="$1"
-    log "waiting for schema (memory_entries table) ..."
+    log "waiting for schema (memory_entries and delegations tables) ..."
     i=0
     while [ "$i" -lt 60 ]; do
         if psql "$dsn" -tAc "SELECT to_regclass('memory_entries')" 2>/dev/null | grep -q memory_entries; then
-            log "schema ready after ${i}s"
-            return 0
+            if psql "$dsn" -tAc "SELECT to_regclass('delegations')" 2>/dev/null | grep -q delegations; then
+                log "schema ready after ${i}s"
+                return 0
+            fi
         fi
         i=$((i + 1))
         sleep 1
@@ -58,21 +60,22 @@ wait_for_schema() {
 
 apply_migration() {
     dsn="$1"
-    migration="/app/hexus/migrations/001_schema.sql"
-    log "applying migration from $migration ..."
-    if psql "$dsn" -v ON_ERROR_STOP=1 -f "$migration" 2>&1; then
-        log "migration applied"
-    else
-        log "ERROR: migration failed"
-        return 1
-    fi
+    for migration in /app/hexus/migrations/*.sql; do
+        log "applying migration from $migration ..."
+        if psql "$dsn" -v ON_ERROR_STOP=1 -f "$migration" 2>&1; then
+            log "migration applied"
+        else
+            log "ERROR: migration failed"
+            return 1
+        fi
+    done
 }
 
 case "$PROFILE" in
     test)
         wait_for_tcp "$PG_TEST_HOST" "$PG_TEST_PORT"
-        # Apply migration if not already applied (idempotent).
-        if psql "$PG_TEST_DSN" -tAc "SELECT to_regclass('memory_entries')" 2>/dev/null | grep -q memory_entries; then
+        # Apply migrations if not already applied.
+        if psql "$PG_TEST_DSN" -tAc "SELECT to_regclass('delegations')" 2>/dev/null | grep -q delegations; then
             log "schema already applied"
         else
             apply_migration "$PG_TEST_DSN"
@@ -89,11 +92,11 @@ case "$PROFILE" in
         # use the same psql -f path the test profile uses, since we
         # have admin creds via PG_TEST_DSN anyway).
         wait_for_tcp "$PG_TEST_HOST" "${PG_MCP_PORT:-5432}"
-        if psql "${HEXUS_DSN:-$PG_TEST_DSN}" -tAc "SELECT to_regclass('memory_entries')" 2>/dev/null | grep -q memory_entries; then
+        if psql "${HEXUS_DSN:-$PG_TEST_DSN}" -tAc "SELECT to_regclass('delegations')" 2>/dev/null | grep -q delegations; then
             log "schema already applied"
         else
-            log "applying migration to MCP DB"
-            psql "${HEXUS_DSN:-$PG_TEST_DSN}" -v ON_ERROR_STOP=1 -f /app/hexus/migrations/001_schema.sql
+            log "applying migrations to MCP DB"
+            apply_migration "${HEXUS_DSN:-$PG_TEST_DSN}"
         fi
         log "starting MCP server (transport=${HEXUS_TRANSPORT:-http})"
         exec hexus-mcp serve \

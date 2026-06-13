@@ -165,6 +165,36 @@ RECALL_MEMORY_SCHEMA = {
 }
 
 
+RECALL_DELEGATION_SCHEMA = {
+    "name": "recall_delegation",
+    "description": (
+        "Semantic search over subagent delegation tasks and results. "
+        "Use this when you need to recall what tasks were delegated to subagents "
+        "and what results they returned in previous steps or sessions."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": "Free-text query describing what delegation task/result to recall.",
+            },
+            "scope": {
+                "type": "string",
+                "description": "Theme scope: 'current', 'all', or a named agent.",
+                "default": "current",
+            },
+            "limit": {
+                "type": "integer",
+                "description": "Max results (1-20, default 5).",
+                "default": 5,
+            },
+        },
+        "required": ["query"],
+    },
+}
+
+
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
@@ -610,6 +640,20 @@ class HexusMemoryProvider(MemoryProvider or object):
                     embedding=vec,
                     metadata=item.metadata,
                 )
+            elif item.action == "delegation":
+                parent_sid = item.metadata.get("parent_session_id") or "default"
+                child_sid = item.extra.get("child_session_id") or "default"
+                combined_text = f"Task: {item.content}\nResult: {item.extra.get('result', '')}"
+                vec = self._maybe_embed(combined_text)
+                self._store.record_delegation(
+                    parent_session_id=parent_sid,
+                    child_session_id=child_sid,
+                    agent_identity=item.agent_identity,
+                    task=item.content,
+                    result=item.extra.get("result") or "",
+                    embedding=vec,
+                    metadata=item.metadata,
+                )
         except Exception as exc:  # noqa: BLE001
             logger.debug(
                 "hexus worker (%s/%s/%s) failed: %s",
@@ -618,6 +662,65 @@ class HexusMemoryProvider(MemoryProvider or object):
                 item.target,
                 str(exc)[:200],
             )
+
+    # -- Observability Hooks (M4) --------------------------------------------
+
+    def on_delegation(
+        self,
+        task: str,
+        result: str,
+        *,
+        child_session_id: str = "",
+        **kwargs,
+    ) -> None:
+        """Called on the parent agent when a subagent finishes."""
+        if not self._healthy or not self._writer:
+            return
+
+        meta = {
+            "parent_session_id": self._session_id,
+            "child_session_id": child_session_id,
+        }
+
+        self._writer.enqueue(
+            action="delegation",
+            agent_identity=self._agent_identity,
+            target="delegations",
+            content=task,
+            extra={"result": result, "child_session_id": child_session_id},
+            metadata=meta,
+        )
+
+    def on_pre_compress(self, messages: List[Dict[str, Any]]) -> str:
+        """Called before context compaction discards older messages."""
+        if not self._healthy or not self._writer or not messages:
+            return ""
+
+        compaction_info = f"[CONTEXT COMPACTION] Compacting {len(messages)} turns from session {self._session_id}."
+        self._writer.enqueue(
+            action="turn",
+            agent_identity=self._agent_identity,
+            target="conversations",
+            content=compaction_info,
+            extra={"role": "system", "session_id": self._session_id},
+            metadata={"is_compaction": True, "message_count": len(messages)},
+        )
+        return ""
+
+    def on_session_end(self, messages: List[Dict[str, Any]]) -> None:
+        """Called when a session ends."""
+        if not self._healthy or not self._writer:
+            return
+
+        end_info = f"[SESSION ENDED] Session {self._session_id} has ended."
+        self._writer.enqueue(
+            action="turn",
+            agent_identity=self._agent_identity,
+            target="conversations",
+            content=end_info,
+            extra={"role": "system", "session_id": self._session_id},
+            metadata={"session_end": True},
+        )
 
     # -- Bulk sync (v0.1.1) --------------------------------------------------
 
@@ -674,11 +777,13 @@ class HexusMemoryProvider(MemoryProvider or object):
     # -- Tool surface --------------------------------------------------------
 
     def get_tool_schemas(self) -> List[Dict[str, Any]]:
-        return [RECALL_MEMORY_SCHEMA, RECALL_CONVERSATION_SCHEMA]
+        return [RECALL_MEMORY_SCHEMA, RECALL_CONVERSATION_SCHEMA, RECALL_DELEGATION_SCHEMA]
 
     def handle_tool_call(self, tool_name: str, args: Dict[str, Any], **kwargs) -> str:
         if tool_name == "recall_conversation":
             return self._handle_recall_conversation(args)
+        if tool_name == "recall_delegation":
+            return self._handle_recall_delegation(args)
         if tool_name != "recall_memory":
             return tool_error(f"Unknown tool: {tool_name}")
         if not self._healthy or not self._store:
@@ -799,6 +904,63 @@ class HexusMemoryProvider(MemoryProvider or object):
                     "ts": ts.isoformat() if ts else None,
                     "score": round(float(r.get("score") or 0.0), 4),
                     "content": (r.get("content") or "")[:2000],
+                }
+            )
+        return json.dumps({"results": results, "count": len(results)})
+
+    def _handle_recall_delegation(self, args: Dict[str, Any]) -> str:
+        """Tool handler for recall_delegation over the delegations table."""
+        if not self._healthy or not self._store:
+            return json.dumps({"results": [], "count": 0, "error": "hexus unavailable"})
+
+        query = (args.get("query") or "").strip()
+        if not query:
+            return tool_error("Missing required arg: query")
+        try:
+            limit = max(1, min(int(args.get("limit", 5)), 20))
+        except (TypeError, ValueError):
+            limit = 5
+
+        scope = (args.get("scope") or "current").strip()
+        agent_filter: Optional[str] = None
+        if scope == "current":
+            agent_filter = self._agent_identity
+        elif scope == "all":
+            pass  # no filters
+        else:
+            agent_filter = scope  # treat as a specific theme name
+
+        try:
+            vec = embed(
+                query,
+                base_url=self._config["embed_url"],
+                model=self._config["embed_model"],
+            )
+        except EmbeddingError as exc:
+            return json.dumps({"results": [], "count": 0, "error": f"embed: {exc}"})
+
+        try:
+            rows = self._store.search_delegations(
+                query_embedding=vec,
+                agent_identity=agent_filter,
+                limit=limit,
+            )
+        except Exception as exc:  # noqa: BLE001
+            return json.dumps({"results": [], "count": 0, "error": f"db: {exc}"})
+
+        results = []
+        for r in rows:
+            ts = r.get("ts")
+            results.append(
+                {
+                    "id": r.get("id"),
+                    "parent_session_id": r.get("parent_session_id"),
+                    "child_session_id": r.get("child_session_id"),
+                    "agent_identity": r.get("agent_identity"),
+                    "task": r.get("task"),
+                    "result": r.get("result"),
+                    "ts": ts.isoformat() if ts else None,
+                    "score": round(float(r.get("score") or 0.0), 4),
                 }
             )
         return json.dumps({"results": results, "count": len(results)})

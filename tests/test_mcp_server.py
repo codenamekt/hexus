@@ -312,6 +312,39 @@ def test_memory_hybrid_recall_turns_round_trip(store):
     assert out["results"][0]["text_score"] > 0.0
 
 
+def test_memory_delegation_round_trip(store):
+    from mcp_server import tools
+
+    identity = agent_of(store) # noqa: SLF001
+    rec = tools.memory_record_delegation(
+        store,
+        {
+            "parent_session_id": "parent-1",
+            "child_session_id": "child-1",
+            "task": "summarize the plan",
+            "result": "the plan looks good",
+            "agent_identity": identity,
+            "metadata": {"test": True},
+        },
+    )
+    assert rec["parent_session_id"] == "parent-1"
+    assert rec["child_session_id"] == "child-1"
+    assert rec["agent_identity"] == identity
+
+    out = tools.memory_recall_delegations(
+        store,
+        {
+            "query": "summarize plan good",
+            "top_k": 5,
+            "agent_identity": identity,
+        },
+    )
+    assert out["count"] >= 1
+    assert out["results"][0]["task"] == "summarize the plan"
+    assert out["results"][0]["result"] == "the plan looks good"
+    assert out["results"][0]["score"] > 0.0
+
+
 def test_memory_recall_respects_min_similarity(store):
     from mcp_server import tools
 
@@ -668,7 +701,9 @@ class TestMcpWiring:
             "memory_count",
             "memory_hybrid_search",
             "memory_hybrid_recall_turns",
-        }.issubset(names), f"missing tools: {names - {n for n in names if n.startswith('memory_')}}"
+            "memory_record_delegation",
+            "memory_recall_delegations",
+        }.issubset(names), f"missing tools: {names}"
 
     def test_every_tool_has_description_and_input_schema(self, store):
         mcp = self._server(store)

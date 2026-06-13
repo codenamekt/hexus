@@ -113,18 +113,7 @@ class MemoryStore:
         """Raised when memory_entries does not exist in the target DB."""
 
     def ensure_schema(self) -> None:
-        """Verify the schema is in place. Does NOT run DDL.
-
-        The migration (migrations/001_schema.sql) is admin-only — it
-        runs `CREATE EXTENSION vector` which requires superuser, and
-        creates the table + indexes which then end up owned by the
-        admin role. The plugin's runtime user (hermes) only has
-        SELECT/INSERT/UPDATE/DELETE on the existing schema, and that's
-        the right separation: DDL at install time, DML at run time.
-
-        Operators apply the migration once via:
-            sudo -u postgres psql -d hermes_memory -f migrations/001_schema.sql
-        """
+        """Verify the schema is in place. Does NOT run DDL."""
         with self._get_pool().connection() as conn:
             with conn.cursor() as cur:
                 cur.execute("SELECT to_regclass('memory_entries')")
@@ -133,20 +122,22 @@ class MemoryStore:
                         "memory_entries table missing. Apply the migration as DB admin: "
                         "psql -d <dbname> -f plugins/memory/hexus/migrations/001_schema.sql"
                     )
+                cur.execute("SELECT to_regclass('delegations')")
+                if cur.fetchone()[0] is None:
+                    raise self.SchemaNotApplied(
+                        "delegations table missing. Apply the migration as DB admin: "
+                        "psql -d <dbname> -f plugins/memory/hexus/migrations/002_observability.sql"
+                    )
 
     def apply_migration_as_admin(self, *, admin_dsn: str) -> None:
-        """One-shot admin path: run the full migration with privileged creds.
-
-        Bypasses the runtime pool — opens a fresh autocommit connection
-        with admin_dsn (typically `user=postgres host=/var/run/postgresql`)
-        so CREATE EXTENSION + CREATE TABLE + CREATE INDEX all succeed.
-        Idempotent: re-running on an already-migrated DB is a no-op.
-        """
-        sql_path = Path(__file__).parent / "migrations" / "001_schema.sql"
-        sql = sql_path.read_text(encoding="utf-8")
+        """One-shot admin path: run the full migrations with privileged creds."""
+        migrations_dir = Path(__file__).parent / "migrations"
+        sql_files = sorted(migrations_dir.glob("*.sql"))
         with psycopg.connect(admin_dsn, autocommit=True) as conn:
             with conn.cursor() as cur:
-                cur.execute(sql)
+                for sql_file in sql_files:
+                    sql = sql_file.read_text(encoding="utf-8")
+                    cur.execute(sql)
 
     # -- Built-in memory mirror (called by on_memory_write) ------------------
 
@@ -712,6 +703,88 @@ class MemoryStore:
 
         if rows:
             self.increment_recall_counts("conversations", [r["id"] for r in rows])
+
+        return rows
+
+    def record_delegation(
+        self,
+        *,
+        parent_session_id: str,
+        child_session_id: str,
+        agent_identity: str = "default",
+        task: str,
+        result: str,
+        embedding: Optional[List[float]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> int:
+        """Insert a delegation entry. Returns row id."""
+        vec_literal = to_hexus_literal(embedding) if embedding is not None else None
+        meta_json = json.dumps(metadata or {})
+        with self._get_pool().connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO delegations
+                        (parent_session_id, child_session_id, agent_identity, task, result, embedding, metadata)
+                    VALUES (%s, %s, %s, %s, %s, %s::vector, %s::jsonb)
+                    RETURNING id
+                    """,
+                    (parent_session_id, child_session_id, agent_identity, task, result, vec_literal, meta_json),
+                )
+                row = cur.fetchone()
+                conn.commit()
+                return int(row[0])
+
+    def search_delegations(
+        self,
+        *,
+        query_embedding: List[float],
+        agent_identity: Optional[str] = None,
+        parent_session_id: Optional[str] = None,
+        limit: int = 5,
+        min_similarity: float = 0.0,
+        decay_half_life_days: float = 0.0,
+        recall_boost_weight: float = 0.0,
+    ) -> List[Dict[str, Any]]:
+        """Semantic recall over delegations."""
+        vec_literal = to_hexus_literal(query_embedding)
+        clauses: List[str] = []
+        params: List[Any] = []
+        if agent_identity:
+            clauses.append("agent_identity = %s")
+            params.append(agent_identity)
+        if parent_session_id:
+            clauses.append("parent_session_id = %s")
+            params.append(parent_session_id)
+        where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+
+        with self._get_pool().connection() as conn:
+            with conn.cursor(row_factory=dict_row) as cur:
+                cur.execute(
+                    f"""
+                    SELECT id, parent_session_id, child_session_id, agent_identity, task, result, ts, metadata,
+                           1 - (embedding <=> %s::vector) AS score
+                    FROM delegations
+                    {where}
+                    ORDER BY embedding <=> %s::vector
+                    LIMIT %s
+                    """,
+                    [vec_literal, *params, vec_literal, limit],
+                )
+                rows = list(cur.fetchall())
+
+        # Apply boost & decay
+        rows = self._apply_recall_boost(rows, recall_boost_weight)
+        rows = self._apply_temporal_decay(rows, decay_half_life_days)
+
+        if decay_half_life_days > 0.0 or recall_boost_weight > 0.0:
+            rows = sorted(rows, key=lambda r: r.get("score", 0.0), reverse=True)
+
+        if min_similarity > 0:
+            rows = [r for r in rows if (r.get("score") or 0) >= min_similarity]
+
+        if rows:
+            self.increment_recall_counts("delegations", [r["id"] for r in rows])
 
         return rows
 
