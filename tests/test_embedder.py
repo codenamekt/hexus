@@ -73,6 +73,31 @@ def test_embed_filters_whitespace_only():
     assert e.is_loaded is False
 
 
+def test_embed_disables_sentence_transformers_progress_bar():
+    """Hermes owns progress reporting; the embedder must not print tqdm bars."""
+    from pgvector.embedder import LocalBertEmbedder
+
+    class ArrayLike:
+        def tolist(self):
+            return [[1.0, 2.0, 3.0]]
+
+    class FakeModel:
+        def __init__(self):
+            self.encode_kwargs = None
+
+        def encode(self, texts, **kwargs):
+            self.encode_kwargs = kwargs
+            return ArrayLike()
+
+    e = LocalBertEmbedder()
+    fake_model = FakeModel()
+    with patch.object(e, "_load_model", return_value=fake_model):
+        assert e.embed(["hello"]) == [[1.0, 2.0, 3.0]]
+
+    assert fake_model.encode_kwargs is not None
+    assert fake_model.encode_kwargs["show_progress_bar"] is False
+
+
 def test_singleton_returns_same_instance():
     """get_default_embedder is process-wide — same args → same instance."""
     from pgvector.embedder import get_default_embedder, reset_default_embedder

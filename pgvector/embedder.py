@@ -137,9 +137,14 @@ class LocalBertEmbedder:
 
         model = self._load_model()
         try:
-            # convert_to_numpy=True returns a numpy array; .tolist() gives
-            # us plain Python floats which psycopg serializes fine.
-            vectors = model.encode(non_empty, convert_to_numpy=True).tolist()
+            # Disable sentence-transformers/tqdm progress bars; Hermes TUI
+            # already reports memory tool progress and noisy "Batches 100%"
+            # output is not useful in chat.
+            vectors = model.encode(
+                non_empty,
+                convert_to_numpy=True,
+                show_progress_bar=False,
+            ).tolist()
         except Exception as exc:  # noqa: BLE001 — fail-soft, surface in logs
             raise EmbedderError(f"local embed failed: {exc}") from exc
 
