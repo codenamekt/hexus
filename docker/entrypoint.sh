@@ -17,6 +17,8 @@ PROFILE="${CMD_PROFILE:-shell}"
 PG_TEST_HOST="${PG_TEST_HOST:-homelab-db}"
 PG_TEST_PORT="${PG_TEST_PORT:-5432}"
 PG_TEST_DSN="${PG_TEST_DSN:-}"
+# Hexus currently shares the legacy memory_pgvector database schema/naming.
+# Prefer MEMORY_PGVECTOR_DB_* in homelab; HEXUS_DB_* is only an optional override.
 export HEXUS_DB_NAME="${HEXUS_DB_NAME:-${MEMORY_PGVECTOR_DB_NAME:-hermes_memory}}"
 export HEXUS_DB_USER="${HEXUS_DB_USER:-${MEMORY_PGVECTOR_DB_USER:-hermes_memory}}"
 export HEXUS_DB_PASS="${HEXUS_DB_PASS:-${MEMORY_PGVECTOR_DB_PASS:?hexus database password required}}"
