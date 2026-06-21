@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import os
 import threading
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
@@ -35,7 +36,31 @@ try:
 except ImportError:
     from embed import to_hexus_literal
 
+try:
+    from .entity_extractor import EntityExtractor
+except ImportError:
+    from entity_extractor import EntityExtractor
+
+import hashlib
+
+try:
+    from .ccr.cache import CCRCache
+except ImportError:
+    from ccr.cache import CCRCache
+
 logger = logging.getLogger(__name__)
+
+_cross_encoder_model: Any = None
+_cross_encoder_lock = threading.Lock()
+
+def get_cross_encoder() -> Any:
+    global _cross_encoder_model
+    if _cross_encoder_model is None:
+        with _cross_encoder_lock:
+            if _cross_encoder_model is None:
+                from sentence_transformers import CrossEncoder
+                _cross_encoder_model = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
+    return _cross_encoder_model
 
 
 class MemoryStore:
@@ -50,6 +75,8 @@ class MemoryStore:
         timeout: float = 5.0,
         max_idle: float = 30.0,
         max_lifetime: float = 300.0,
+        entity_extractor_enabled: bool = True,
+        entity_extractor_patterns: Optional[Dict[str, str]] = None,
     ):
         """Open a lazily-initialized, self-draining ConnectionPool.
 
@@ -75,6 +102,25 @@ class MemoryStore:
         self._timeout = timeout
         self._max_idle = max_idle
         self._max_lifetime = max_lifetime
+        env_enabled = os.environ.get("HEXUS_ENTITY_EXTRACTOR_ENABLED")
+        if env_enabled is not None:
+            entity_extractor_enabled = env_enabled.lower() not in ("0", "false", "no")
+
+        env_patterns = os.environ.get("HEXUS_ENTITY_EXTRACTOR_PATTERNS")
+        if env_patterns is not None:
+            try:
+                entity_extractor_patterns = json.loads(env_patterns)
+            except Exception as exc:
+                logger.warning("Failed to parse HEXUS_ENTITY_EXTRACTOR_PATTERNS: %s", exc)
+
+        self._entity_extractor = EntityExtractor(
+            patterns=entity_extractor_patterns,
+            enabled=entity_extractor_enabled,
+        )
+        self._ccr_cache = CCRCache()
+
+
+
 
     # -- Pool lifecycle ------------------------------------------------------
 
@@ -149,30 +195,113 @@ class MemoryStore:
         content: str,
         embedding: Optional[List[float]] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        compressed: Optional[str] = None,
+        content_hash: Optional[bytes] = None,
     ) -> Optional[int]:
-        """Insert a memory entry. Returns row id, or None if duplicate (no-op).
+        """Insert a memory entry. Returns row id, or None if duplicate (no-op)."""
+        meta = dict(metadata or {})
+        if "entities" not in meta:
+            extracted = self._entity_extractor.extract_entities(content)
+            if extracted:
+                meta["entities"] = extracted
 
-        Matches the built-in tool's "reject exact duplicate" semantics via
-        the (agent_identity, target, content) unique constraint + ON CONFLICT.
-        """
-        meta_json = json.dumps(metadata or {})
+        # Hashing / deduplication logic
+        if content_hash is None:
+            hash_target = compressed if compressed is not None else content
+            content_hash = hashlib.sha256(hash_target.encode("utf-8")).digest()
+
         vec_literal = to_hexus_literal(embedding) if embedding is not None else None
 
         with self._get_pool().connection() as conn:
-            with conn.cursor() as cur:
+            with conn.cursor(row_factory=dict_row) as cur:
+                # Deduplication check: does a row with this content_hash, target and agent_identity exist?
+                cur.execute(
+                    """
+                    SELECT id, metadata FROM memory_entries
+                    WHERE agent_identity = %s AND target = %s AND content_hash = %s
+                    """,
+                    (agent_identity, target, content_hash),
+                )
+                row = cur.fetchone()
+                if row:
+                    # Duplicate found! Merge metadata
+                    existing_id = row["id"]
+                    existing_meta = dict(row["metadata"] or {})
+                    
+                    # Merge logic: append provenance from new metadata
+                    new_provenance = meta.get("provenance")
+                    if new_provenance:
+                        existing_provenances = existing_meta.get("provenance")
+                        if existing_provenances is None:
+                            existing_provenances = []
+                        elif not isinstance(existing_provenances, list):
+                            existing_provenances = [existing_provenances]
+                        
+                        if isinstance(new_provenance, list):
+                            for p in new_provenance:
+                                if p not in existing_provenances:
+                                    existing_provenances.append(p)
+                        else:
+                            if new_provenance not in existing_provenances:
+                                existing_provenances.append(new_provenance)
+                        existing_meta["provenance"] = existing_provenances
+                    
+                    # Merge session_ids
+                    existing_sids = existing_meta.setdefault("sessions", [])
+                    if not isinstance(existing_sids, list):
+                        existing_sids = [existing_sids]
+                        existing_meta["sessions"] = existing_sids
+                    
+                    # Also collect existing session_id if present
+                    orig_sid = existing_meta.get("session_id")
+                    if orig_sid and orig_sid not in existing_sids:
+                        existing_sids.append(orig_sid)
+                        
+                    new_sid = meta.get("session_id")
+                    if new_sid and new_sid not in existing_sids:
+                        existing_sids.append(new_sid)
+                            
+                    # Update metadata on the existing row
+                    cur.execute(
+                        """
+                        UPDATE memory_entries
+                        SET metadata = %s::jsonb, updated_at = now()
+                        WHERE id = %s
+                        """,
+                        (json.dumps(existing_meta), existing_id),
+                    )
+                    conn.commit()
+                    
+                    if compressed:
+                        self._ccr_cache.set(existing_id, content)
+                    return None
+
+                # Otherwise insert
+                meta_json = json.dumps(meta)
                 cur.execute(
                     """
                     INSERT INTO memory_entries
-                        (agent_identity, target, content, embedding, metadata)
-                    VALUES (%s, %s, %s, %s::vector, %s::jsonb)
+                        (agent_identity, target, content, embedding, metadata, compressed, content_hash)
+                    VALUES (%s, %s, %s, %s::vector, %s::jsonb, %s, %s)
                     ON CONFLICT (agent_identity, target, content) DO NOTHING
                     RETURNING id
                     """,
-                    (agent_identity, target, content, vec_literal, meta_json),
+                    (agent_identity, target, content, vec_literal, meta_json, compressed, content_hash),
                 )
-                row = cur.fetchone()
+                res = cur.fetchone()
                 conn.commit()
-                return int(row[0]) if row else None
+                
+                row_id = None
+                if res:
+                    if isinstance(res, dict):
+                        row_id = res.get("id")
+                    else:
+                        row_id = res[0]
+                
+                if row_id and compressed:
+                    self._ccr_cache.set(row_id, content)
+                return row_id
+
 
     def replace(
         self,
@@ -182,33 +311,58 @@ class MemoryStore:
         old_text: str,
         new_content: str,
         new_embedding: Optional[List[float]] = None,
+        compressed: Optional[str] = None,
+        content_hash: Optional[bytes] = None,
     ) -> int:
-        """Update entries in (agent_identity, target) where content contains old_text.
-
-        Matches built-in semantics — old_text is a substring match. Returns
-        the number of rows updated (built-in updates the FIRST match; we
-        update all matches in the same scope for safety).
-        """
+        """Update entries in (agent_identity, target) where content contains old_text."""
         vec_literal = (
             to_hexus_literal(new_embedding) if new_embedding is not None else None
         )
+        new_entities = self._entity_extractor.extract_entities(new_content)
+        new_entities_json = json.dumps(new_entities)
+
+        if content_hash is None:
+            hash_target = compressed if compressed is not None else new_content
+            content_hash = hashlib.sha256(hash_target.encode("utf-8")).digest()
+
         with self._get_pool().connection() as conn:
             with conn.cursor() as cur:
+                # Find matching rows to update cache
                 cur.execute(
                     """
-                    UPDATE memory_entries
-                       SET content    = %s,
-                           embedding  = %s::vector,
-                           updated_at = now()
+                    SELECT id FROM memory_entries
                      WHERE agent_identity = %s
                        AND target = %s
                        AND content LIKE %s
                     """,
-                    (new_content, vec_literal, agent_identity, target, f"%{old_text}%"),
+                    (agent_identity, target, f"%{old_text}%"),
+                )
+                matching_ids = [r[0] for r in cur.fetchall()]
+
+                cur.execute(
+                    """
+                    UPDATE memory_entries
+                       SET content      = %s,
+                           embedding    = %s::vector,
+                           metadata     = jsonb_set(metadata, '{entities}', %s::jsonb, true),
+                           compressed   = %s,
+                           content_hash = %s,
+                           updated_at   = now()
+                      WHERE agent_identity = %s
+                        AND target = %s
+                        AND content LIKE %s
+                    """,
+                    (new_content, vec_literal, new_entities_json, compressed, content_hash, agent_identity, target, f"%{old_text}%"),
                 )
                 updated = cur.rowcount
                 conn.commit()
+
+                if updated > 0 and compressed:
+                    for rid in matching_ids:
+                        self._ccr_cache.set(rid, new_content)
+
                 return int(updated)
+
 
     def remove(
         self,
@@ -282,6 +436,9 @@ class MemoryStore:
         decay_half_life_days: float = 0.0,
         recall_boost_weight: float = 0.0,
         platform: Optional[str] = None,
+        min_confidence: float = 0.0,
+        rerank: bool = False,
+        query_text: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """Semantic recall via cosine distance.
 
@@ -303,11 +460,13 @@ class MemoryStore:
             params.append(platform)
         where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
 
+        db_limit = max(limit, 50) if rerank else limit
+
         with self._get_pool().connection() as conn:
             with conn.cursor(row_factory=dict_row) as cur:
                 cur.execute(
                     f"""
-                    SELECT id, agent_identity, target, content, created_at,
+                    SELECT id, agent_identity, target, content, compressed, created_at,
                            updated_at, metadata,
                            1 - (embedding <=> %s::vector) AS score
                     FROM memory_entries
@@ -315,24 +474,41 @@ class MemoryStore:
                     ORDER BY embedding <=> %s::vector
                     LIMIT %s
                     """,
-                    [vec_literal, *params, vec_literal, limit],
+                    [vec_literal] + params + [vec_literal, db_limit],
                 )
                 rows = list(cur.fetchall())
+                print(f"DEBUG_SEARCH_RAW: rows_len={len(rows)} data={[ {'id': r['id'], 'content': r['content'], 'score': r['score']} for r in rows ]}")
 
         # Apply boost & decay
         rows = self._apply_recall_boost(rows, recall_boost_weight)
         rows = self._apply_temporal_decay(rows, decay_half_life_days)
+        rows = self._apply_min_confidence(rows, min_confidence)
 
-        if decay_half_life_days > 0.0 or recall_boost_weight > 0.0:
+        if rerank and query_text and rows:
+            model = get_cross_encoder()
+            pairs = [[query_text, r.get("compressed") or r.get("content")] for r in rows]
+            rerank_scores = model.predict(pairs)
+            for r, rerank_score in zip(rows, rerank_scores):
+                r["rerank_score"] = float(rerank_score)
+                r["score"] = r["rerank_score"]
+
+        if decay_half_life_days > 0.0 or recall_boost_weight > 0.0 or rerank:
             rows = sorted(rows, key=lambda r: r.get("score", 0.0), reverse=True)
+
+        rows = rows[:limit]
 
         if min_similarity > 0:
             rows = [r for r in rows if (r.get("score") or 0) >= min_similarity]
 
         if rows:
             self.increment_recall_counts("memory_entries", [r["id"] for r in rows])
+            for r in rows:
+                if r.get("compressed") is not None:
+                    self._ccr_cache.set(r["id"], r["content"])
+                    r["content"] = r["compressed"]
 
         return rows
+
 
     def hybrid_search(
         self,
@@ -348,6 +524,8 @@ class MemoryStore:
         decay_half_life_days: float = 0.0,
         recall_boost_weight: float = 0.0,
         platform: Optional[str] = None,
+        min_confidence: float = 0.0,
+        rerank: bool = False,
     ) -> List[Dict[str, Any]]:
         """Blend semantic vector search and full-text search."""
         if not query_text or not query_text.strip():
@@ -360,6 +538,9 @@ class MemoryStore:
                 decay_half_life_days=decay_half_life_days,
                 recall_boost_weight=recall_boost_weight,
                 platform=platform,
+                min_confidence=min_confidence,
+                rerank=rerank,
+                query_text=None,
             )
             for r in rows:
                 r["vector_score"] = r.get("vector_score", r.get("score"))
@@ -382,9 +563,11 @@ class MemoryStore:
             
         where = ("AND " + " AND ".join(clauses)) if clauses else ""
 
+        db_limit = max(limit, 50) if rerank else limit
+
         sql = f"""
         WITH vector_search AS (
-            SELECT id, agent_identity, target, content, created_at, updated_at, metadata,
+            SELECT id, agent_identity, target, content, compressed, created_at, updated_at, metadata,
                    1 - (embedding <=> %s::vector) AS vector_score
             FROM memory_entries
             WHERE 1=1 {where}
@@ -392,10 +575,10 @@ class MemoryStore:
             LIMIT %s
         ),
         text_search AS (
-            SELECT id, agent_identity, target, content, created_at, updated_at, metadata,
-                   ts_rank(to_tsvector('english', content), websearch_to_tsquery('english', %s)) AS text_score
+            SELECT id, agent_identity, target, content, compressed, created_at, updated_at, metadata,
+                   ts_rank(to_tsvector('english', COALESCE(compressed, content)), websearch_to_tsquery('english', %s)) AS text_score
             FROM memory_entries
-            WHERE to_tsvector('english', content) @@ websearch_to_tsquery('english', %s)
+            WHERE to_tsvector('english', COALESCE(compressed, content)) @@ websearch_to_tsquery('english', %s)
               {where}
             ORDER BY text_score DESC
             LIMIT %s
@@ -404,6 +587,7 @@ class MemoryStore:
                COALESCE(v.agent_identity, t.agent_identity) AS agent_identity,
                COALESCE(v.target, t.target) AS target,
                COALESCE(v.content, t.content) AS content,
+               COALESCE(v.compressed, t.compressed) AS compressed,
                COALESCE(v.created_at, t.created_at) AS created_at,
                COALESCE(v.updated_at, t.updated_at) AS updated_at,
                COALESCE(v.metadata, t.metadata) AS metadata,
@@ -419,31 +603,92 @@ class MemoryStore:
         v_params = [vec_literal]
         for p in params:
             v_params.append(p)
-        v_params.extend([vec_literal, limit])
+        v_params.extend([vec_literal, db_limit])
         
-        t_params = [query_text, query_text] + params + [limit]
+        t_params = [query_text, query_text] + params + [db_limit]
         
-        all_params = v_params + t_params + [vector_weight, text_weight, limit]
+        all_params = v_params + t_params + [vector_weight, text_weight, db_limit]
 
         with self._get_pool().connection() as conn:
             with conn.cursor(row_factory=dict_row) as cur:
                 cur.execute(sql, all_params)
                 rows = list(cur.fetchall())
 
-        # Apply boost & decay
-        rows = self._apply_recall_boost(rows, recall_boost_weight)
-        rows = self._apply_temporal_decay(rows, decay_half_life_days)
+        # Blended Score Calculation:
+        # Combined Score = 0.6 * S_vector + 0.3 * S_BM25 + 0.1 * S_recency
+        now = datetime.now(timezone.utc)
+        for r in rows:
+            ts_val = r.get("updated_at") or r.get("ts") or r.get("created_at")
+            if isinstance(ts_val, str):
+                try:
+                    from datetime import datetime as dt
+                    ts_val = dt.fromisoformat(ts_val)
+                except Exception:
+                    pass
+            if ts_val:
+                if ts_val.tzinfo is None:
+                    ts_val = ts_val.replace(tzinfo=timezone.utc)
+                age_days = (now - ts_val).total_seconds() / 86400.0
+                if decay_half_life_days > 0.0:
+                    r["recency_score"] = math.exp(-math.log(2.0) * age_days / decay_half_life_days)
+                else:
+                    r["recency_score"] = 1.0
+            else:
+                r["recency_score"] = 1.0
 
-        if decay_half_life_days > 0.0 or recall_boost_weight > 0.0:
-            rows = sorted(rows, key=lambda r: r.get("score", 0.0), reverse=True)
+        max_text_score = max([r.get("text_score", 0.0) for r in rows]) if rows else 0.0
+        for r in rows:
+            v_score = r.get("vector_score", 0.0)
+            t_score = r.get("text_score", 0.0)
+            norm_t_score = (t_score / max_text_score) if max_text_score > 0.0 else 0.0
+            rec_score = r.get("recency_score", 1.0)
+            r["score"] = 0.6 * v_score + 0.3 * norm_t_score + 0.1 * rec_score
+
+        # Apply boost & min_confidence (decay is already part of score blending)
+        rows = self._apply_recall_boost(rows, recall_boost_weight)
+        rows = self._apply_min_confidence(rows, min_confidence)
+
+        if rerank and rows:
+            model = get_cross_encoder()
+            pairs = [[query_text, r.get("compressed") or r.get("content")] for r in rows]
+            rerank_scores = model.predict(pairs)
+            for r, rerank_score in zip(rows, rerank_scores):
+                r["rerank_score"] = float(rerank_score)
+                r["score"] = r["rerank_score"]
+
+        rows = sorted(rows, key=lambda r: r.get("score", 0.0), reverse=True)
+        rows = rows[:limit]
 
         if min_similarity > 0:
             rows = [r for r in rows if (r.get("score") or 0) >= min_similarity]
 
         if rows:
             self.increment_recall_counts("memory_entries", [r["id"] for r in rows])
+            for r in rows:
+                if r.get("compressed") is not None:
+                    self._ccr_cache.set(r["id"], r["content"])
+                    r["content"] = r["compressed"]
 
         return rows
+
+    def fetch_full(self, memory_id: int) -> Optional[str]:
+        """Fetch the original full content of a memory entry, checking CCRCache first."""
+        cached = self._ccr_cache.get(memory_id)
+        if cached is not None:
+            return cached
+
+        with self._get_pool().connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT content FROM memory_entries WHERE id = %s",
+                    (memory_id,),
+                )
+                row = cur.fetchone()
+                if row:
+                    content = row[0]
+                    self._ccr_cache.set(memory_id, content)
+                    return content
+        return None
 
     # -- Bulk import from MEMORY.md / USER.md (v0.1.1) ----------------------
 
@@ -535,8 +780,14 @@ class MemoryStore:
         No dedup (turns are inherently time-ordered events — same content
         twice is two distinct turns, even verbatim).
         """
-        meta_json = json.dumps(metadata or {})
+        meta = dict(metadata or {})
+        if "entities" not in meta:
+            extracted = self._entity_extractor.extract_entities(content)
+            if extracted:
+                meta["entities"] = extracted
+        meta_json = json.dumps(meta)
         vec_literal = to_hexus_literal(embedding) if embedding is not None else None
+
 
         with self._get_pool().connection() as conn:
             with conn.cursor() as cur:
@@ -591,7 +842,7 @@ class MemoryStore:
                     ORDER BY embedding <=> %s::vector
                     LIMIT %s
                     """,
-                    [vec_literal, *params, vec_literal, limit],
+                    [vec_literal] + params + [vec_literal, limit],
                 )
                 rows = list(cur.fetchall())
 
@@ -787,7 +1038,7 @@ class MemoryStore:
                     ORDER BY embedding <=> %s::vector
                     LIMIT %s
                     """,
-                    [vec_literal, *params, vec_literal, limit],
+                    [vec_literal] + params + [vec_literal, limit],
                 )
                 rows = list(cur.fetchall())
 
@@ -927,6 +1178,66 @@ class MemoryStore:
             r["score"] = r["score"] * decay
         return rows
 
+    def _apply_min_confidence(self, rows: List[Dict[str, Any]], min_confidence: float) -> List[Dict[str, Any]]:
+        if min_confidence <= 0.0:
+            return rows
+        filtered = []
+        for r in rows:
+            meta = r.get("metadata") or {}
+            try:
+                confirms = int(meta.get("confirm_count") or 0)
+            except (ValueError, TypeError):
+                confirms = 0
+            try:
+                rejects = int(meta.get("reject_count") or 0)
+            except (ValueError, TypeError):
+                rejects = 0
+            total = confirms + rejects
+            if total > 0:
+                ratio = confirms / total
+                if ratio >= min_confidence:
+                    filtered.append(r)
+            else:
+                filtered.append(r)
+        return filtered
+
+    def confirm_entry(self, entry_id: int) -> bool:
+        """Increment confirm_count in metadata JSONB for the given entry ID."""
+        sql = """
+        UPDATE memory_entries
+        SET metadata = jsonb_set(
+            metadata,
+            '{confirm_count}',
+            (COALESCE(metadata->>'confirm_count', '0')::int + 1)::text::jsonb
+        )
+        WHERE id = %s
+        """
+        with self._get_pool().connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, (entry_id,))
+                updated = cur.rowcount
+                conn.commit()
+                return updated > 0
+
+    def reject_entry(self, entry_id: int) -> bool:
+        """Increment reject_count in metadata JSONB for the given entry ID."""
+        sql = """
+        UPDATE memory_entries
+        SET metadata = jsonb_set(
+            metadata,
+            '{reject_count}',
+            (COALESCE(metadata->>'reject_count', '0')::int + 1)::text::jsonb
+        )
+        WHERE id = %s
+        """
+        with self._get_pool().connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, (entry_id,))
+                updated = cur.rowcount
+                conn.commit()
+                return updated > 0
+
+
     def increment_recall_counts(self, table: str, ids: List[int]) -> None:
         if not ids:
             return
@@ -946,3 +1257,191 @@ class MemoryStore:
                     conn.commit()
         except Exception as exc:
             logger.warning("Failed to increment recall counts for %s: %s", table, exc)
+
+    def entity_graph(
+        self,
+        *,
+        entity_type: str,
+        entity_value: str,
+        agent_identity: Optional[str] = None,
+        limit: int = 5,
+    ) -> Dict[str, Any]:
+        """Find other entities that co-occur with the given entity."""
+        query_entity_json = json.dumps([{"type": entity_type, "value": entity_value}])
+        
+        sql = """
+        WITH source_entries AS (
+            SELECT id, content, metadata, updated_at
+            FROM memory_entries
+            WHERE metadata->'entities' @> %s::jsonb
+              AND (%s::text IS NULL OR agent_identity = %s)
+        ),
+        related_entities AS (
+            SELECT
+                e->>'type' AS ent_type,
+                e->>'value' AS ent_value,
+                COUNT(*) AS co_occurrences,
+                (ARRAY_AGG(content ORDER BY updated_at DESC))[1] AS sample_content
+            FROM source_entries,
+                 jsonb_array_elements(metadata->'entities') AS e
+            WHERE (e->>'type', e->>'value') != (%s, %s)
+            GROUP BY e->>'type', e->>'value'
+        )
+        SELECT ent_type AS type, ent_value AS value, co_occurrences, sample_content
+        FROM related_entities
+        ORDER BY co_occurrences DESC
+        LIMIT %s
+        """
+        params = [query_entity_json, agent_identity, agent_identity, entity_type, entity_value, limit]
+        with self._get_pool().connection() as conn:
+            with conn.cursor(row_factory=dict_row) as cur:
+                cur.execute(sql, params)
+                related = list(cur.fetchall())
+                return {
+                    "entity": {"type": entity_type, "value": entity_value},
+                    "related": related,
+                }
+
+    def graph_walk(
+        self,
+        *,
+        entity_type: str,
+        entity_value: str,
+        agent_identity: Optional[str] = None,
+        max_depth: int = 2,
+        limit: int = 5,
+    ) -> List[Dict[str, Any]]:
+        """Perform recursive CTE path traversal from a start entity."""
+        sql = """
+        WITH RECURSIVE graph_walk AS (
+            -- Anchor member: Hop 1 co-occurring entities
+            SELECT 
+                e->>'type' AS ent_type,
+                e->>'value' AS ent_value,
+                1 AS depth,
+                ARRAY[jsonb_build_object('type', %s::text, 'value', %s::text)] AS path
+            FROM memory_entries,
+                 jsonb_array_elements(metadata->'entities') AS e
+            WHERE metadata->'entities' @> jsonb_build_array(jsonb_build_object('type', %s::text, 'value', %s::text))
+              AND (%s::text IS NULL OR agent_identity = %s)
+              AND (e->>'type', e->>'value') != (%s, %s)
+
+            UNION ALL
+
+            -- Recursive member: Hop N
+            SELECT 
+                next_e->>'type' AS ent_type,
+                next_e->>'value' AS ent_value,
+                gw.depth + 1 AS depth,
+                gw.path || jsonb_build_object('type', gw.ent_type, 'value', gw.ent_value) AS path
+            FROM graph_walk gw
+            JOIN memory_entries m
+              ON m.metadata->'entities' @> jsonb_build_array(jsonb_build_object('type', gw.ent_type, 'value', gw.ent_value))
+            CROSS JOIN LATERAL jsonb_array_elements(m.metadata->'entities') AS next_e
+            WHERE gw.depth < %s
+              -- Scoping
+              AND (%s::text IS NULL OR m.agent_identity = %s)
+              -- Avoid cycles
+              AND NOT (jsonb_build_object('type', next_e->>'type', 'value', next_e->>'value') = ANY(gw.path))
+              AND (next_e->>'type', next_e->>'value') != (%s, %s)
+        )
+
+        SELECT ent_type AS type, ent_value AS value, MIN(depth) AS min_depth, COUNT(*) AS occurrences
+        FROM graph_walk
+        GROUP BY ent_type, ent_value
+        ORDER BY min_depth ASC, occurrences DESC
+        LIMIT %s
+        """
+        params = [
+            entity_type, entity_value,
+            entity_type, entity_value,
+            agent_identity, agent_identity,
+            entity_type, entity_value,
+            max_depth,
+            agent_identity, agent_identity,
+            entity_type, entity_value,
+            limit
+        ]
+        with self._get_pool().connection() as conn:
+            with conn.cursor(row_factory=dict_row) as cur:
+                cur.execute(sql, params)
+                return list(cur.fetchall())
+
+    def common_topics(
+        self,
+        *,
+        agent_identity: Optional[str] = None,
+        min_strength: int = 2,
+        limit: int = 10,
+    ) -> List[Dict[str, Any]]:
+        """Find clusters of heavily co-occurring entities/topics."""
+        sql = """
+        SELECT 
+            e1->>'type' AS type_a,
+            e1->>'value' AS value_a,
+            e2->>'type' AS type_b,
+            e2->>'value' AS value_b,
+            COUNT(*) AS strength
+        FROM memory_entries,
+             jsonb_array_elements(metadata->'entities') e1,
+             jsonb_array_elements(metadata->'entities') e2
+        WHERE e1->>'value' < e2->>'value' -- Avoid duplicate A-B/B-A and self-pairing
+          AND (%s::text IS NULL OR agent_identity = %s)
+        GROUP BY type_a, value_a, type_b, value_b
+        HAVING COUNT(*) >= %s
+        ORDER BY strength DESC
+        LIMIT %s
+        """
+        params = [agent_identity, agent_identity, min_strength, limit]
+        with self._get_pool().connection() as conn:
+            with conn.cursor(row_factory=dict_row) as cur:
+                cur.execute(sql, params)
+                return list(cur.fetchall())
+
+    def summarize_session(
+        self,
+        *,
+        session_id: str,
+        limit: int = 5,
+    ) -> Dict[str, Any]:
+        """Compute the vector centroid of a session's turns and find the K closest turns."""
+        count_sql = "SELECT COUNT(*) FROM conversations WHERE session_id = %s"
+        sql = """
+        WITH centroid AS (
+            SELECT AVG(embedding) AS vec
+            FROM conversations
+            WHERE session_id = %s
+        )
+        SELECT id, role, content, ts, metadata,
+               1 - (embedding <=> (SELECT vec FROM centroid)) AS centrality_score
+        FROM conversations
+        WHERE session_id = %s
+          AND embedding IS NOT NULL
+        ORDER BY embedding <=> (SELECT vec FROM centroid)
+        LIMIT %s
+        """
+        with self._get_pool().connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(count_sql, (session_id,))
+                total_turns = cur.fetchone()[0]
+
+            if total_turns == 0:
+                return {
+                    "session_id": session_id,
+                    "turn_count": 0,
+                    "summary_turns": [],
+                }
+
+            with conn.cursor(row_factory=dict_row) as cur:
+                cur.execute(sql, (session_id, session_id, limit))
+                rows = list(cur.fetchall())
+                for r in rows:
+                    if r.get("ts") and hasattr(r["ts"], "isoformat"):
+                        r["ts"] = r["ts"].isoformat()
+                return {
+                    "session_id": session_id,
+                    "turn_count": total_turns,
+                    "summary_turns": rows,
+                }
+
+

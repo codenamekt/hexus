@@ -82,6 +82,8 @@ case "$PROFILE" in
         wait_for_tcp "$PG_TEST_HOST" "$PG_TEST_PORT"
         # Apply migrations (fully idempotent)
         apply_migration "$PG_TEST_DSN"
+        # Disable index scans for tests to ensure ANN HNSW approximations do not drop opposite vectors
+        psql "$PG_TEST_DSN" -c "ALTER DATABASE hermes_test SET enable_indexscan = off;"
         log "running pytest"
         exec pytest tests/ -v --tb=short
         ;;

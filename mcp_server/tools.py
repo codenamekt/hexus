@@ -186,6 +186,20 @@ def memory_retain(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
                 duplicates += 1
             else:
                 inserted += 1
+                webhook_url = os.environ.get("HEXUS_WEBHOOK_URL")
+                if webhook_url:
+                    from hexus.webhook.dispatcher import dispatch_webhook
+                    dispatch_webhook(
+                        url=webhook_url,
+                        secret=os.environ.get("HEXUS_WEBHOOK_SECRET"),
+                        event="memory_retain",
+                        payload={
+                            "agent_identity": agent,
+                            "target": target,
+                            "content": content,
+                            "metadata": meta or {},
+                        }
+                    )
         except Exception as exc:  # noqa: BLE001
             errors.append(f"add failed for {content[:40]!r}: {exc}")
     return {"inserted": inserted, "duplicates": duplicates, "errors": errors}
@@ -224,6 +238,9 @@ def memory_recall(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
     if min_similarity > 1:
         min_similarity = 1.0
 
+    min_confidence = float(args.get("min_confidence", 0.0))
+    min_confidence = max(0.0, min(min_confidence, 1.0))
+
     try:
         vec = embed(query)
     except EmbeddingError as exc:
@@ -235,12 +252,14 @@ def memory_recall(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
         target=target,
         limit=top_k,
         min_similarity=min_similarity,
+        min_confidence=min_confidence,
     )
     return {
         "query": query,
         "count": len(rows),
         "results": [_row_to_dict(r) for r in rows],
     }
+
 
 
 def memory_search(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
@@ -298,11 +317,27 @@ def memory_forget(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
     with store._get_pool().connection() as conn:  # noqa: SLF001 — admin path
         with conn.cursor() as cur:
             cur.execute(
-                "DELETE FROM memory_entries WHERE id = %s AND agent_identity = %s RETURNING id",
+                "DELETE FROM memory_entries WHERE id = %s AND agent_identity = %s RETURNING id, target, content",
                 (entry_id, agent),
             )
             row = cur.fetchone()
             conn.commit()
+
+    if row:
+        webhook_url = os.environ.get("HEXUS_WEBHOOK_URL")
+        if webhook_url:
+            from hexus.webhook.dispatcher import dispatch_webhook
+            dispatch_webhook(
+                url=webhook_url,
+                secret=os.environ.get("HEXUS_WEBHOOK_SECRET"),
+                event="memory_forget",
+                payload={
+                    "agent_identity": agent,
+                    "target": row[1],
+                    "content": row[2],
+                }
+            )
+
     return {
         "deleted": 1 if row else 0,
         "dry_run": False,
@@ -492,6 +527,9 @@ def memory_hybrid_search(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, 
     min_similarity = float(args.get("min_similarity", 0.0))
     min_similarity = max(0.0, min(min_similarity, 1.0))
 
+    min_confidence = float(args.get("min_confidence", 0.0))
+    min_confidence = max(0.0, min(min_confidence, 1.0))
+
     try:
         vec = embed(query)
     except EmbeddingError as exc:
@@ -506,12 +544,14 @@ def memory_hybrid_search(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, 
         vector_weight=vector_weight,
         text_weight=text_weight,
         min_similarity=min_similarity,
+        min_confidence=min_confidence,
     )
     return {
         "query": query,
         "count": len(rows),
         "results": [_row_to_dict(r) for r in rows],
     }
+
 
 
 def memory_hybrid_recall_turns(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
@@ -682,3 +722,173 @@ def memory_recall_delegations(store: MemoryStore, args: Dict[str, Any]) -> Dict[
         "count": len(rows),
         "results": [_row_to_dict(r) for r in rows],
     }
+
+
+def memory_entity_graph(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
+    """Find other entities that co-occur with a target entity."""
+    entity_type = args.get("entity_type")
+    if not isinstance(entity_type, str) or not entity_type.strip():
+        raise ValueError("entity_type must be a non-empty string")
+    
+    entity_value = args.get("entity_value")
+    if not isinstance(entity_value, str) or not entity_value.strip():
+        raise ValueError("entity_value must be a non-empty string")
+
+    agent = args.get("agent_identity")
+    if isinstance(agent, str) and agent.strip() == "":
+        agent = None
+
+    limit = int(args.get("limit", 5))
+    limit = max(1, min(limit, 100))
+
+    return store.entity_graph(
+        entity_type=entity_type,
+        entity_value=entity_value,
+        agent_identity=agent,
+        limit=limit,
+    )
+
+
+def memory_graph_walk(store: MemoryStore, args: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Traverse the co-occurrence graph up to N hops away from a start entity."""
+    entity_type = args.get("entity_type")
+    if not isinstance(entity_type, str) or not entity_type.strip():
+        raise ValueError("entity_type must be a non-empty string")
+    
+    entity_value = args.get("entity_value")
+    if not isinstance(entity_value, str) or not entity_value.strip():
+        raise ValueError("entity_value must be a non-empty string")
+
+    agent = args.get("agent_identity")
+    if isinstance(agent, str) and agent.strip() == "":
+        agent = None
+
+    max_depth = int(args.get("max_depth", 2))
+    max_depth = max(1, min(max_depth, 5))
+
+    limit = int(args.get("limit", 5))
+    limit = max(1, min(limit, 100))
+
+    return store.graph_walk(
+        entity_type=entity_type,
+        entity_value=entity_value,
+        agent_identity=agent,
+        max_depth=max_depth,
+        limit=limit,
+    )
+
+
+def memory_common_topics(store: MemoryStore, args: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Retrieve clusters/cliques of heavily co-occurring entities."""
+    agent = args.get("agent_identity")
+    if isinstance(agent, str) and agent.strip() == "":
+        agent = None
+
+    min_strength = int(args.get("min_strength", 2))
+    min_strength = max(1, min_strength)
+
+    limit = int(args.get("limit", 10))
+    limit = max(1, min(limit, 100))
+
+    return store.common_topics(
+        agent_identity=agent,
+        min_strength=min_strength,
+        limit=limit,
+    )
+
+
+def memory_confirm(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
+    """Increment confirm_count in metadata JSONB for the given entry ID."""
+    entry_id = args.get("id")
+    if entry_id is None:
+        raise ValueError("id is required")
+    try:
+        entry_id = int(entry_id)
+    except (TypeError, ValueError):
+        raise ValueError("id must be an integer")
+
+    success = store.confirm_entry(entry_id)
+    return {"id": entry_id, "success": success}
+
+
+def memory_reject(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
+    """Increment reject_count in metadata JSONB for the given entry ID."""
+    entry_id = args.get("id")
+    if entry_id is None:
+        raise ValueError("id is required")
+    try:
+        entry_id = int(entry_id)
+    except (TypeError, ValueError):
+        raise ValueError("id must be an integer")
+
+    success = store.reject_entry(entry_id)
+    return {"id": entry_id, "success": success}
+
+
+def memory_summarize_session(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
+    """Compute the vector centroid of a session's turns and find the K closest turns."""
+    session_id = args.get("session_id")
+    if not isinstance(session_id, str) or not session_id.strip():
+        raise ValueError("session_id must be a non-empty string")
+
+    limit = int(args.get("limit", 5))
+    limit = max(1, min(limit, 100))
+
+    return store.summarize_session(
+        session_id=session_id,
+        limit=limit,
+    )
+
+
+def memory_retrieve(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
+    """Retrieve the original full content of a memory entry by its integer ID.
+
+    args:
+      id: the integer row ID of the memory entry to retrieve.
+    """
+    entry_id = args.get("id")
+    if entry_id is None:
+        raise ValueError("id is required")
+    try:
+        entry_id = int(entry_id)
+    except (TypeError, ValueError):
+        raise ValueError("id must be an integer")
+
+    content = store.fetch_full(entry_id)
+    if content is None:
+        return {"id": entry_id, "found": False, "content": None}
+    return {"id": entry_id, "found": True, "content": content}
+
+
+def memory_stats(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
+    """Return metrics from Hexus database and background async queue stats."""
+    db_stats = {
+        "memory_entries_count": store.count(agent_identity=None, target=None),
+        "conversations_count": store.count_turns(agent_identity=None, session_id=None),
+    }
+
+    # Try to get queue stats from any active AsyncWriter instances
+    queue_stats = {}
+    import gc
+    from hexus.writer import AsyncWriter
+    for obj in gc.get_objects():
+        if isinstance(obj, AsyncWriter):
+            queue_stats = obj.stats()
+            break
+
+    return {
+        "status": "ok",
+        "database": db_stats,
+        "async_writer": queue_stats or {
+            "queue_size": 0,
+            "queue_max": 256,
+            "dropped_total": 0,
+            "thread_alive": False,
+            "p50_latency_sec": float("nan"),
+            "p95_latency_sec": float("nan"),
+        }
+    }
+
+
+
+

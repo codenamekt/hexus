@@ -99,7 +99,7 @@ The plugin is built around a clear separation of concerns:
 
 ---
 
-### M4 — Agent-of-agents observability (v0.5 fork) ⏳ PROPOSED
+### M4 — Agent-of-agents observability (v0.5 fork) ✅ DONE
 
 **Goal:** when one minion delegates to another (subagent pattern), capture the task/result pair so the parent can recall "what did I ask my research subagent last week and what did it find." Extend this to the MCP server so a Claude Desktop session can query the same delegation history.
 
@@ -117,18 +117,14 @@ The plugin is built around a clear separation of concerns:
 
 ### M5 — Production hardening at scale (v0.6 → v0.7 fork) ⏳ PROPOSED
 
-**Goal:** survive a fleet of dozens of minions, hundreds of writes per minute, multi-million-row tables. Plus publish artifacts so the plugin is a one-liner install.
+**Goal:** survive a fleet of dozens of minions, hundreds of writes per minute, multi-million-row tables.
 
 | Capability | Version |
 |---|---|
 | TTL / decay policy on `memory_entries.updated_at` and `conversations.ts` so stale entries surface less | v0.6.0 |
 | Optional partial HNSW indexes per high-volume `agent_identity` when cross-theme search becomes the slow query | v0.6.0 |
-| Periodic re-sync of `MEMORY.md` / `USER.md` (not just on init) for callers that edit the markdown directly | v0.6.0 |
 | Bulk-import CLI for migrating from Holographic / Honcho / Mem0 / Hindsight installations | v0.6.0 |
-| Metrics: queue depth, drop count, embed latency p50/p95, recall hit rate (Prometheus-friendly) | v0.7.0 |
 | Per-platform metadata facets (CLI vs cron vs telegram vs API) for richer recall filtering | v0.7.0 |
-| PyPI publish (`pip install hexus` and `pip install hexus[mcp]`) | v0.7.0 |
-| GitHub Actions CI: build the image, run the test suite, publish the image to GHCR on tag | v0.7.0 |
 
 **Why this matters for multi-agent deployments:** a memory store that's fast for one user often falls over under fleet load. M5 is the slow + boring work that turns "works on my hermes" into "works for ten agents writing concurrently — and for ten non-hermes MCP clients reading concurrently."
 
@@ -136,10 +132,13 @@ The plugin is built around a clear separation of concerns:
 
 ### M6 — Public release (v1.0) ⏳ PROPOSED
 
-**Goal:** documentation, contract guarantees, and a CHANGELOG good enough that someone landing on this plugin from the hermes-agent docs (or from the MCP server directory) can deploy it cleanly without reading the source.
+**Goal:** documentation, contract guarantees, and a CHANGELOG good enough that someone landing on this plugin from the hermes-agent docs (or from the MCP server directory) can deploy it cleanly without reading the source. Also publishes container and package artifacts with metrics instrumentation.
 
 | Capability | Version |
 |---|---|
+| Metrics: queue depth, drop count, embed latency p50/p95, recall hit rate (Prometheus-friendly) | v1.0.0 |
+| PyPI publish (`pip install hexus` and `pip install hexus[mcp]`) | v1.0.0 |
+| GitHub Actions CI: build the image, run the test suite, publish the image to GHCR on tag | v1.0.0 |
 | Stable config schema (semver guarantees on `plugins.hexus.*` keys + MCP tool input schemas) | v1.0.0 |
 | Full hermes-agent docs page with config reference, scaling guide, troubleshooting | v1.0.0 |
 | Coverage: store + mcp tests in upstream CI against a Postgres service container | v1.0.0 |

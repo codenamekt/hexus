@@ -28,7 +28,8 @@ custom agent ── http MCP  ────┘       server    │  ┌───�
 This repo ships two integration paths that share the exact same `MemoryStore` and the exact same `LocalBertEmbedder` instance per process:
 
 1. **Hermes plugin** (`hexus/__init__.py`) — drop into `~/.hermes/plugins/hexus/`. Mirrors built-in `memory` writes, captures conversation turns, provides `recall_memory` + `recall_conversation` tools. Per-minion scoping via `X-Hermes-Session-Key`.
-2. **MCP server** (`mcp_server/`) — `hexus-mcp serve --transport stdio|http`. Exposes the same store as eight MCP tools (`memory_retain`, `memory_recall`, `memory_search`, `memory_forget`, `memory_recall_turns`, `memory_append_turn`, `memory_count`, `memory_health`). Multi-agent: each connected client picks its own `agent_identity`.
+2. **MCP server** (`mcp_server/`) — `hexus-mcp serve --transport stdio|http`. Exposes the same store as fourteen MCP tools (including `memory_retain`, `memory_recall`, `memory_search`, `memory_entity_graph`, `memory_confirm`, `memory_summarize_session`, and more). Multi-agent: each connected client picks its own `agent_identity`.
+
 
 The local BERT swap (sentence-transformers MiniLM-L6-v2, 384-dim, ~88MB on disk, <500MB RAM on CPU) replaces the upstream HTTP-embedder. The HTTP path is preserved as a fallback for operators with an existing Ollama / OpenAI-compatible endpoint.
 
@@ -65,21 +66,35 @@ Two integration surfaces, one shared store. The fork's v0.4.0 also replaced the 
 | `prefetch(query)` | Top-K semantically similar `memory_entries` in current theme, injected ambient. |
 | `recall_memory(query, scope, target, limit)` tool | Explicit cross-theme search of durable memory entries. |
 | `recall_conversation(query, scope, limit)` tool | Explicit search over past chat turns. `scope ∈ {current, session, all, <theme>}`. |
+| `entity_graph(entity_type, entity_value, scope, limit)` tool | Find other entities that co-occur with a target entity. |
+| `graph_walk(entity_type, entity_value, scope, max_depth, limit)` tool | Traverse the co-occurrence graph recursively up to N hops. |
+| `common_topics(scope, min_strength, limit)` tool | Retrieve clusters/cliques of heavily co-occurring entities. |
+| `confirm_memory(id)` tool | Confirm the relevance of a memory entry by incrementing its confirm count. |
+| `reject_memory(id)` tool | Flag a memory entry as noise by incrementing its reject count. |
+| `summarize_session(session_id, limit)` tool | Extractive summarization: returns turns closest to the session vector centroid. |
+
 
 ### MCP server surface (NEW in v0.4.0)
 
-Eight tools exposed to any MCP client (Claude Desktop, Cursor, custom agents). All take an optional `agent_identity` argument so each connected client is isolated by default.
+Fourteen tools exposed to any MCP client (Claude Desktop, Cursor, custom agents). All take an optional `agent_identity` argument so each connected client is isolated by default.
 
 | Tool | Purpose |
 |---|---|
 | `memory_health` | Liveness + capability check (DB status, embedder model/dim, row counts). |
 | `memory_retain` | Add one or many memory entries. `target='memory'|'user'`, optional metadata, `doc_type`, `source_url`. |
-| `memory_recall` | Semantic search over `memory_entries`. `top_k` (cap 100), `min_similarity` (0..1). |
+| `memory_recall` | Semantic search over `memory_entries`. Supports `top_k`, `min_similarity`, and `min_confidence` filters. |
 | `memory_search` | Browse entries (no embedding) — pagination, scoping. |
 | `memory_forget` | Delete by id. **Dry-run by default**; pass `confirm=true` to actually delete. |
 | `memory_recall_turns` | Semantic search over past chat turns. |
-| `memory_append_turn` | Append one chat turn. Mirrors the plugin's `sync_turn`. |
+| `memory_append_turn` | Append one chat turn. Mirrors the plugin's `sync_turn` (extracts entities). |
 | `memory_count` | Row counts for entries + turns, scoped. |
+| `memory_entity_graph` | Find other entities that co-occur with a target entity. |
+| `memory_graph_walk` | Traverse the co-occurrence graph recursively up to N hops from a start entity. |
+| `memory_common_topics` | Retrieve clusters/cliques of heavily co-occurring entities. |
+| `memory_confirm` | Confirm the relevance of a memory entry by incrementing its confirm count. |
+| `memory_reject` | Flag a memory entry as noise by incrementing its reject count. |
+| `memory_summarize_session` | Compute the vector centroid of a session's turns and return K closest turns. |
+
 
 ### Internals (shared by both surfaces)
 

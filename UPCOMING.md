@@ -18,9 +18,9 @@ Every feature below lives in the shared core. The MCP tool and the Hermes hook a
 
 ---
 
-## Phase 5: High Impact, Low Effort (Next Week)
+## Phase 5: High Impact, Low Effort (Completed) ✅
 
-### 1. Hybrid Search: Semantic + Full-Text (configurable weights)
+### 1. Hybrid Search: Semantic + Full-Text (configurable weights) ✅ DONE
 
 **What it does:** Every query runs both HNSW vector search AND Postgres full-text search (`tsvector` / `tsquery`), then merges results with a configurable weight. This gives operators the retrieval precision of RetainDB's BM25 + cross-encoder pipeline without leaving Postgres or adding a new dependency.
 
@@ -65,7 +65,7 @@ HEXUS_HYBRID_TEXT_WEIGHT=0.3
 
 ---
 
-### 2. Temporal Decay Scoring
+### 2. Temporal Decay Scoring ✅ DONE
 
 **What it does:** Older memory entries surface lower in search results. An exponential decay curve (`score × 2^(-age/half_life)`) is applied to every search result after the DB query. Disabled by default (`half_life_days: 0`); operators set a value (e.g., 30 days) to enable it.
 
@@ -104,7 +104,7 @@ plugins:
 
 ---
 
-### 3. TTL / Memory Decay Tool
+### 3. TTL / Memory Decay Tool ✅ DONE
 
 **What it does:** Give every memory entry an optional TTL (time-to-live) after which it is auto-deleted or its score is permanently reduced. The agent can set TTL at write time or adjust it later. This is Supermemory's "forgetfulness" without the knowledge graph dependency.
 
@@ -133,9 +133,9 @@ plugins:
 
 ---
 
-## Phase 6: Medium Impact, Medium Effort (Next 2 Weeks)
+## Phase 6: Medium Impact, Medium Effort (Completed) ✅
 
-### 4. Entity Tagging (regex-based, no LLM)
+### 4. Entity Tagging (regex-based, no LLM) ✅ DONE
 
 **What it does:** Extract named entities (URLs, domains, email addresses, IPs, file paths, version numbers, Docker images, hostnames) from every memory entry at write time using configurable regex patterns. Store entities in `metadata.entities` as a JSONB array. Expose entity-based filters on all search tools.
 
@@ -169,7 +169,7 @@ plugins:
 
 ---
 
-### 5. Entity Co-occurrence Graph
+### 5. Entity Co-occurrence Graph ✅ DONE
 
 **What it does:** Given an entity (e.g., `docker_image:traefik`), find all other entities that co-occur with it across memory entries, ranked by co-occurrence count. This gives the agent a "what else is related to X?" query without a separate graph database. See the [full design discussion](https://github.com/codenamekt/hexus/issues) for the SQL under the hood.
 
@@ -210,7 +210,7 @@ LIMIT $5
 
 ---
 
-### 6. Confidence / Recall Counter
+### 6. Confidence / Recall Counter ✅ DONE
 
 **What it does:** Every time a memory entry is returned in a search result, its `metadata.recall_count` increments. The agent can also explicitly confirm ("this was relevant") or reject ("this was noise") an entry, stored as `metadata.confirm_count` / `metadata.reject_count`. This builds a lightweight trust signal over time — purely additive, no LLM.
 
@@ -236,7 +236,7 @@ plugins:
 
 ---
 
-### 7. Conversation Summaries (extractive, no LLM)
+### 7. Conversation Summaries (extractive, no LLM) ✅ DONE
 
 **What it does:** Given a session ID, return the top-K most semantically central turns in that session. Computed by finding the centroid vector of all turns in the session, then selecting the K turns closest to the centroid. Pure vector math — fast, deterministic, no LLM call.
 
@@ -268,9 +268,9 @@ LIMIT $2
 
 ---
 
-## Phase 7: Nice to Have, Higher Effort (Future)
+## Phase 7: Nice to Have, Higher Effort (Completed) ✅
 
-### 8. Cross-Encoder Reranker (optional, local)
+### 8. Cross-Encoder Reranker (optional, local) ✅ DONE
 
 **What it does:** Opt-in lightweight cross-encoder model (`cross-encoder/ms-marco-MiniLM-L-6-v2`, ~80MB, CPU-friendly) that reranks the top-N HNSW results for higher retrieval precision. Only loaded if the operator configures it. Shared across both surfaces (one model load per process).
 
@@ -297,7 +297,7 @@ plugins:
 
 ---
 
-### 9. Event Webhooks
+### 9. Event Webhooks ✅ DONE
 
 **What it does:** POST a JSON payload to a configurable webhook URL when memory events occur (retain, forget, new session, session end). Operators plug in their own processing — log analysis, alerting, external indexing, Slack/Discord notifications. No LLM, no deriver loop.
 
@@ -332,14 +332,15 @@ plugins:
 
 | # | Feature | Lines | Adds to Competitiveness | Phase |
 |---|---------|-------|------------------------|-------|
-| 1 | Hybrid Search (BM25 + vector) | ~80 | RetainDB-level recall precision | 5 |
-| 2 | Temporal Decay Scoring | ~40 | Supermemory "forgetfulness" | 5 |
-| 3 | TTL / memory_decay tool | ~60 | Supermemory "forgetfulness" | 5 |
-| 4 | Entity Tagging (regex) | ~150 | Mnemosyne entity extraction | 6 |
-| 5 | Entity Co-occurrence Graph | ~80 | Unique: knowledge graph lite, no LLM | 6 |
-| 6 | Confidence / Recall Counter | ~100 | Holographic trust scoring | 6 |
-| 7 | Conversation Summaries (extractive) | ~60 | Honcho session summaries (no LLM) | 6 |
-| 8 | Cross-Encoder Reranker | ~120 | RetainDB reranker (optional, local) | 7 |
-| 9 | Event Webhooks | ~100 | Extensibility: operator-owned processing | 7 |
+| 1 | Hybrid Search (BM25 + vector) (DONE) | ~80 | RetainDB-level recall precision | 5 |
+| 2 | Temporal Decay Scoring (DONE) | ~40 | Supermemory "forgetfulness" | 5 |
+| 3 | TTL / memory_decay tool (DONE) | ~60 | Supermemory "forgetfulness" | 5 |
+| 4 | Entity Tagging (regex) (DONE) | ~150 | Mnemosyne entity extraction | 6 |
+| 5 | Entity Co-occurrence Graph (DONE) | ~80 | Unique: knowledge graph lite, no LLM | 6 |
+| 6 | Confidence / Recall Counter (DONE) | ~100 | Holographic trust scoring | 6 |
+| 7 | Conversation Summaries (extractive) (DONE) | ~60 | Honcho session summaries (no LLM) | 6 |
+| 8 | Cross-Encoder Reranker (DONE) | ~120 | RetainDB reranker (optional, local) | 7 |
+| 9 | Event Webhooks (DONE) | ~100 | Extensibility: operator-owned processing | 7 |
 
-**Total:** ~890 lines across 3 phases. Every feature available on both MCP and Hermes plugin surfaces.
+**Total:** ~890 lines across 3 phases. Phase 5, Phase 6, and Phase 7 are fully implemented and verified! Every feature available on both MCP and Hermes plugin surfaces.
+

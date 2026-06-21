@@ -21,9 +21,10 @@ works with:
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, List
 
 from hexus.store import MemoryStore
+
 
 from . import tools
 
@@ -115,6 +116,7 @@ def _build_server(
         agent_identity: str = "",
         target: str = "",
         min_similarity: float = 0.0,
+        min_confidence: float = 0.0,
     ) -> Dict[str, Any]:
         """Semantic search over memory entries.
 
@@ -125,6 +127,7 @@ def _build_server(
                           across every agent in the store.
           target: 'memory' | 'user' | '' (both).
           min_similarity: 0..1, default 0. Filter out lower-scored hits.
+          min_confidence: 0..1, default 0. Filter out entries with lower confidence ratio.
 
         Returns: {"query", "count", "results": [{id, agent_identity, target,
                                                   content, score, metadata, ...}]}
@@ -137,8 +140,10 @@ def _build_server(
                 "agent_identity": agent_identity,
                 "target": target,
                 "min_similarity": min_similarity,
+                "min_confidence": min_confidence,
             },
         )
+
 
     @mcp.tool()
     def memory_hybrid_search(
@@ -149,34 +154,38 @@ def _build_server(
         agent_identity: str = "",
         target: str = "",
         min_similarity: float = 0.0,
-    ) -> Dict[str, Any]:
-        """Hybrid search blending semantic vector search and full-text search over memory entries.
+        min_confidence: float = 0.0,
+     ) -> Dict[str, Any]:
+         """Hybrid search blending semantic vector search and full-text search over memory entries.
 
-        Args:
-          query: the natural-language search query.
-          top_k: 1..100, default 5.
-          vector_weight: weight for semantic similarity (0..1, default 0.7).
-          text_weight: weight for full-text search rank (0..1, default 0.3).
-          agent_identity: scope to one agent, or empty / None to search all.
-          target: 'memory' | 'user' | '' (both).
-          min_similarity: 0..1, default 0. Filter out lower-scored hits.
+         Args:
+           query: the natural-language search query.
+           top_k: 1..100, default 5.
+           vector_weight: weight for semantic similarity (0..1, default 0.7).
+           text_weight: weight for full-text search rank (0..1, default 0.3).
+           agent_identity: scope to one agent, or empty / None to search all.
+           target: 'memory' | 'user' | '' (both).
+           min_similarity: 0..1, default 0. Filter out lower-scored hits.
+           min_confidence: 0..1, default 0. Filter out entries with lower confidence ratio.
 
-        Returns: {"query", "count", "results": [{id, agent_identity, target,
-                                                  content, score, vector_score,
-                                                  text_score, metadata, ...}]}
-        """
-        return tools.memory_hybrid_search(
-            store,
-            {
-                "query": query,
-                "top_k": top_k,
-                "vector_weight": vector_weight,
-                "text_weight": text_weight,
-                "agent_identity": agent_identity,
-                "target": target,
-                "min_similarity": min_similarity,
-            },
-        )
+         Returns: {"query", "count", "results": [{id, agent_identity, target,
+                                                   content, score, vector_score,
+                                                   text_score, metadata, ...}]}
+         """
+         return tools.memory_hybrid_search(
+             store,
+             {
+                 "query": query,
+                 "top_k": top_k,
+                 "vector_weight": vector_weight,
+                 "text_weight": text_weight,
+                 "agent_identity": agent_identity,
+                 "target": target,
+                 "min_similarity": min_similarity,
+                 "min_confidence": min_confidence,
+             },
+         )
+
 
     @mcp.tool()
     def memory_search(
@@ -457,7 +466,190 @@ def _build_server(
         ]
         return "\n".join(lines)
 
+    @mcp.tool()
+    def memory_entity_graph(
+        entity_type: str,
+        entity_value: str,
+        agent_identity: str = "",
+        limit: int = 5,
+    ) -> Dict[str, Any]:
+        """Find other entities that co-occur with a target entity.
+
+        Args:
+          entity_type: the type of entity (e.g. 'docker_image', 'url').
+          entity_value: the specific value (e.g. 'postgres', 'google.com').
+          agent_identity: scope search to specific agent theme.
+          limit: 1..100, default 5.
+        """
+        return tools.memory_entity_graph(
+            store,
+            {
+                "entity_type": entity_type,
+                "entity_value": entity_value,
+                "agent_identity": agent_identity,
+                "limit": limit,
+            },
+        )
+
+    @mcp.tool()
+    def memory_graph_walk(
+        entity_type: str,
+        entity_value: str,
+        agent_identity: str = "",
+        max_depth: int = 2,
+        limit: int = 5,
+    ) -> List[Dict[str, Any]]:
+        """Traverse the co-occurrence graph up to N hops away from a start entity.
+
+        Args:
+          entity_type: type of starting entity.
+          entity_value: value of starting entity.
+          agent_identity: scope search to specific agent theme.
+          max_depth: 1..5, default 2. Max depth of graph walk.
+          limit: 1..100, default 5.
+        """
+        return tools.memory_graph_walk(
+            store,
+            {
+                "entity_type": entity_type,
+                "entity_value": entity_value,
+                "agent_identity": agent_identity,
+                "max_depth": max_depth,
+                "limit": limit,
+            },
+        )
+
+    @mcp.tool()
+    def memory_common_topics(
+        agent_identity: str = "",
+        min_strength: int = 2,
+        limit: int = 10,
+    ) -> List[Dict[str, Any]]:
+        """Retrieve clusters/cliques of heavily co-occurring entities.
+
+        Args:
+          agent_identity: scope search to specific agent theme.
+          min_strength: minimum count of co-occurrences.
+          limit: 1..100, default 10.
+        """
+        return tools.memory_common_topics(
+            store,
+            {
+                "agent_identity": agent_identity,
+                "min_strength": min_strength,
+                "limit": limit,
+            },
+        )
+
+    @mcp.tool()
+    def memory_confirm(id: int) -> Dict[str, Any]:
+        """Increment confirm_count in metadata JSONB for the given entry ID.
+
+        Args:
+          id: the integer row ID of the memory entry to confirm.
+        """
+        return tools.memory_confirm(
+            store,
+            {
+                "id": id,
+            },
+        )
+
+    @mcp.tool()
+    def memory_reject(id: int) -> Dict[str, Any]:
+        """Increment reject_count in metadata JSONB for the given entry ID.
+
+        Args:
+          id: the integer row ID of the memory entry to reject.
+        """
+        return tools.memory_reject(
+            store,
+            {
+                "id": id,
+            },
+        )
+
+    @mcp.tool()
+    def memory_summarize_session(
+        session_id: str,
+        limit: int = 5,
+    ) -> Dict[str, Any]:
+        """Compute the vector centroid of a session's turns and find the K closest turns.
+
+        Args:
+          session_id: the session identifier to summarize.
+          limit: 1..100, default 5.
+        """
+        return tools.memory_summarize_session(
+            store,
+            {
+                "session_id": session_id,
+                "limit": limit,
+            },
+        )
+
+    @mcp.tool()
+    def memory_retrieve(id: int) -> Dict[str, Any]:
+        """Retrieve the original full content of a memory entry by its integer ID.
+
+        Args:
+          id: the integer row ID of the memory entry to retrieve.
+        """
+        return tools.memory_retrieve(
+            store,
+            {
+                "id": id,
+            },
+        )
+
+    @mcp.tool()
+    def headroom_retrieve(id: int) -> Dict[str, Any]:
+        """Retrieve the original full content of a memory entry by its integer ID.
+
+        Args:
+          id: the integer row ID of the memory entry to retrieve.
+        """
+        return tools.memory_retrieve(
+            store,
+            {
+                "id": id,
+            },
+        )
+
+    @mcp.tool()
+    def memory_stats() -> Dict[str, Any]:
+        """Return metrics from Hexus database and background async queue stats."""
+        return tools.memory_stats(store, {})
+
+    # -- patch ASGI app for Prometheus /metrics endpoint -------------------
+    _orig_get_asgi_app = mcp.streamable_http_app
+    def get_asgi_app_with_metrics(*args, **kwargs):
+        app = _orig_get_asgi_app(*args, **kwargs)
+        from starlette.responses import Response
+        async def metrics(request):
+            health = store.health()
+            m_entries = store.count(agent_identity=None, target=None)
+            m_turns = store.count_turns(agent_identity=None)
+            lines = [
+                "# HELP hexus_db_reachable Liveness check for the Postgres database (1=ok, 0=error)",
+                "# TYPE hexus_db_reachable gauge",
+                f"hexus_db_reachable {1 if health.get('ok') else 0}",
+                "# HELP hexus_memory_entries_total Total number of stored memory entries",
+                "# TYPE hexus_memory_entries_total counter",
+                f"hexus_memory_entries_total {m_entries}",
+                "# HELP hexus_conversation_turns_total Total number of stored conversation turns",
+                "# TYPE hexus_conversation_turns_total counter",
+                f"hexus_conversation_turns_total {m_turns}",
+            ]
+            return Response("\n".join(lines), media_type="text/plain")
+        app.add_route("/metrics", metrics)
+        return app
+    mcp.streamable_http_app = get_asgi_app_with_metrics
+
     return mcp
+
+
+
 
 
 def build_server(

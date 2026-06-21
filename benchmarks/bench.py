@@ -92,15 +92,33 @@ def benchmark_store(dsn: str):
     query_text = "database tuning vector indexing best practices"
     query_vec = embedder.embed([query_text])[0]
     
-    for limit in [5, 10, 50, 100]:
-        times = []
+    print("\n  --- Latency Benchmarks (n=20) ---")
+    for limit in [5, 10, 50]:
+        # Vector search
+        t_vec = []
         for _ in range(20):
             t0 = time.perf_counter()
-            rows = store.search(query_embedding=query_vec, agent_identity=agent, limit=limit)
-            times.append(time.perf_counter() - t0)
-        print(f"  Recall top-{limit:3d} (n=20): mean={statistics.mean(times)*1000:.2f}ms, "
-              f"p95={statistics.quantiles(times, n=20)[18]*1000:.2f}ms, "
-              f"results={len(rows)}")
+            rows_vec = store.search(query_embedding=query_vec, agent_identity=agent, limit=limit)
+            t_vec.append(time.perf_counter() - t0)
+            
+        # Hybrid Search
+        t_hybrid = []
+        for _ in range(20):
+            t0 = time.perf_counter()
+            rows_hybrid = store.hybrid_search(query_embedding=query_vec, query_text=query_text, agent_identity=agent, limit=limit)
+            t_hybrid.append(time.perf_counter() - t0)
+            
+        # Rerank Search
+        t_rerank = []
+        for _ in range(20):
+            t0 = time.perf_counter()
+            rows_rerank = store.hybrid_search(query_embedding=query_vec, query_text=query_text, agent_identity=agent, limit=limit, rerank=True)
+            t_rerank.append(time.perf_counter() - t0)
+            
+        print(f"  Top-{limit:2d} Vector Search:  mean={statistics.mean(t_vec)*1000:.2f}ms, p95={statistics.quantiles(t_vec, n=20)[18]*1000:.2f}ms, results={len(rows_vec)}")
+        print(f"  Top-{limit:2d} Hybrid Search:  mean={statistics.mean(t_hybrid)*1000:.2f}ms, p95={statistics.quantiles(t_hybrid, n=20)[18]*1000:.2f}ms, results={len(rows_hybrid)}")
+        print(f"  Top-{limit:2d} Rerank Search:  mean={statistics.mean(t_rerank)*1000:.2f}ms, p95={statistics.quantiles(t_rerank, n=20)[18]*1000:.2f}ms, results={len(rows_rerank)}")
+        print("-" * 60)
     
     # Multi-agent isolation check
     agent2 = f"{agent}-B"

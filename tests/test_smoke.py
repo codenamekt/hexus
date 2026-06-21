@@ -181,8 +181,9 @@ def test_search_with_fake_embeddings(store):
     # similarity math and SQL round-trip behave correctly.
     vec_a = [0.1] * 384
     vec_b = [-0.1] * 384
-    s.add(agent_identity=agent, target="memory", content="A entry", embedding=vec_a)
-    s.add(agent_identity=agent, target="memory", content="B entry", embedding=vec_b)
+    r1 = s.add(agent_identity=agent, target="memory", content="A entry", embedding=vec_a)
+    r2 = s.add(agent_identity=agent, target="memory", content="B entry", embedding=vec_b)
+    print(f"DEBUG_EMBEDDINGS: r1={r1}, r2={r2}, count={s.count(agent_identity=agent)}")
 
     rows = s.search(query_embedding=vec_a, agent_identity=agent, limit=5)
     assert len(rows) == 2
@@ -486,5 +487,297 @@ def test_search_with_platform_filter(store):
     tg_rows = s.search(query_embedding=vec, agent_identity=agent, platform="telegram")
     assert len(tg_rows) == 1
     assert tg_rows[0]["content"] == "telegram note"
+
+
+def test_entity_tagging_and_graph(store):
+    s, agent = store
+    vec = [0.1] * 384
+    # Insert entries with entities
+    s.add(
+        agent_identity=agent,
+        target="memory",
+        content="Visit https://google.com/search on the file /var/log/nginx.log for postgres running in Traefik.",
+        embedding=vec,
+    )
+    s.add(
+        agent_identity=agent,
+        target="memory",
+        content="Configure postgres connection parameters and check /var/log/nginx.log.",
+        embedding=vec,
+    )
+    s.add(
+        agent_identity=agent,
+        target="memory",
+        content="Traefik reverse proxy maps to our website at https://google.com/search.",
+        embedding=vec,
+    )
+
+    # 1. Verify entity tagging extracted entities automatically
+    import psycopg
+    with psycopg.connect(s._dsn) as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT metadata FROM memory_entries WHERE agent_identity = %s", (agent,))
+            rows = cur.fetchall()
+            all_entities = []
+            for r in rows:
+                meta = r[0] or {}
+                entities = meta.get("entities", [])
+                all_entities.extend(entities)
+            
+            entity_types = [e["type"] for e in all_entities]
+            assert "url" in entity_types
+            assert "file_path" in entity_types
+
+    # 2. Verify entity_graph co-occurrence
+    res = s.entity_graph(entity_type="file_path", entity_value="/var/log/nginx.log", agent_identity=agent)
+    assert res["entity"]["value"] == "/var/log/nginx.log"
+    related_values = [r["value"] for r in res["related"]]
+    assert any("postgres" in val.lower() or "traefik" in val.lower() for val in related_values)
+
+    # 3. Verify graph_walk recursive traversal
+    walk = s.graph_walk(entity_type="url", entity_value="https://google.com/search", agent_identity=agent, max_depth=2)
+    assert len(walk) >= 1
+
+    # 4. Verify common_topics cliques
+    cliques = s.common_topics(agent_identity=agent, min_strength=2)
+    assert len(cliques) >= 1
+
+
+def test_confidence_and_summarize(store):
+    s, agent = store
+    vec = [0.1] * 384
+    
+    # 1. Insert memories and test confirm/reject
+    id1 = s.add(agent_identity=agent, target="memory", content="Memory Alpha", embedding=vec)
+    id2 = s.add(agent_identity=agent, target="memory", content="Memory Beta", embedding=vec)
+    
+    # Initially no feedback
+    res = s.search(query_embedding=vec, agent_identity=agent, min_confidence=0.5)
+    assert len(res) == 2
+    
+    # Reject Memory Alpha, Confirm Memory Beta
+    assert s.reject_entry(id1) is True
+    assert s.confirm_entry(id2) is True
+    
+    # Filter with min_confidence=0.5 -> should only return Memory Beta
+    res = s.search(query_embedding=vec, agent_identity=agent, min_confidence=0.5)
+    assert len(res) == 1
+    assert res[0]["content"] == "Memory Beta"
+    
+    # 2. Insert conversation turns and test extractive summarization
+    session_id = "test-summarize-session-" + agent
+    # Add turns
+    s.append_turn(session_id=session_id, agent_identity=agent, role="user", content="Turn 1 hello", embedding=[0.1]*384)
+    s.append_turn(session_id=session_id, agent_identity=agent, role="assistant", content="Turn 2 hi", embedding=[0.11]*384)
+    s.append_turn(session_id=session_id, agent_identity=agent, role="user", content="Turn 3 how are you", embedding=[0.12]*384)
+    
+    summary = s.summarize_session(session_id=session_id, limit=2)
+    assert summary["session_id"] == session_id
+    assert summary["turn_count"] == 3
+    assert len(summary["summary_turns"]) == 2
+    # Check centrality scores
+    assert summary["summary_turns"][0]["centrality_score"] > 0.99
+
+
+def test_append_turn_entity_extraction(store):
+    s, agent = store
+    session_id = "test-turn-entity-" + agent
+    
+    # Append a turn containing a URL and a path
+    s.append_turn(
+        session_id=session_id,
+        agent_identity=agent,
+        role="user",
+        content="Check the docs at https://test.org/docs and update /var/log/app.log",
+        embedding=[0.1]*384
+    )
+    
+    # Verify entities are extracted in metadata
+    import psycopg
+    with psycopg.connect(s._dsn) as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT metadata FROM conversations WHERE session_id = %s", (session_id,))
+            row = cur.fetchone()
+            assert row is not None
+            meta = row[0] or {}
+            entities = meta.get("entities", [])
+            types = [e["type"] for e in entities]
+            assert "url" in types
+            assert "file_path" in types
+
+
+def test_headroom_compression_and_retrieve(store):
+    s, agent = store
+    
+    # We will manually simulate compression by writing a row with compressed content
+    content_long = "This is a very long memory entry that exceeds the token threshold and will be compressed."
+    compressed_text = "[Compressed Text] This is..."
+    
+    # Insert with compressed column set
+    row_id = s.add(
+        agent_identity=agent,
+        target="memory",
+        content=content_long,
+        compressed=compressed_text,
+        embedding=[0.1]*384,
+    )
+    assert isinstance(row_id, int)
+    
+    # Verify search returns the compressed snippet as 'content'
+    results = s.search(query_embedding=[0.1]*384, agent_identity=agent, limit=1)
+    assert len(results) == 1
+    assert results[0]["content"] == compressed_text
+    
+    # Verify fetch_full returns the original full content (content_long)
+    full_content = s.fetch_full(row_id)
+    assert full_content == content_long
+    
+    # Verify it was cached in CCRCache
+    cached = s._ccr_cache.get(row_id)
+    assert cached == content_long
+
+
+def test_sha256_deduplication(store):
+    s, agent = store
+    
+    # Insert first memory
+    row_id_1 = s.add(
+        agent_identity=agent,
+        target="memory",
+        content="Same exact content to test SHA-256 deduplication",
+        embedding=[0.1]*384,
+        metadata={"provenance": "first-source", "session_id": "session-1"},
+    )
+    
+    # Insert second identical memory (but with different metadata)
+    row_id_2 = s.add(
+        agent_identity=agent,
+        target="memory",
+        content="Same exact content to test SHA-256 deduplication",
+        embedding=[0.1]*384,
+        metadata={"provenance": "second-source", "session_id": "session-2"},
+    )
+    
+    # It should return None because it's a duplicate
+    assert row_id_2 is None
+    
+    # Verify metadata is merged (provenance array, sessions array)
+    results = s.search(query_embedding=[0.1]*384, agent_identity=agent, limit=1)
+    assert len(results) == 1
+    meta = results[0]["metadata"]
+    assert "first-source" in meta["provenance"]
+    assert "second-source" in meta["provenance"]
+    assert "session-1" in meta["sessions"]
+    assert "session-2" in meta["sessions"]
+
+
+def test_score_blending(store):
+    s, agent = store
+
+    # Add entries with different created_at values to test decay
+    vec = [0.1] * 384
+    # Modern entry
+    row_id_1 = s.add(
+        agent_identity=agent,
+        target="memory",
+        content="Postgres optimization guidelines and database tuning tips",
+        embedding=vec,
+    )
+    
+    # Old entry (decayed)
+    import psycopg
+    from datetime import datetime, timezone, timedelta
+    old_time = datetime.now(timezone.utc) - timedelta(days=10)
+    row_id_2 = s.add(
+        agent_identity=agent,
+        target="memory",
+        content="Postgres indexing best practices for database tuning",
+        embedding=vec,
+    )
+    # Manually backdate created_at and updated_at
+    with psycopg.connect(s._dsn) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE memory_entries SET created_at = %s, updated_at = %s WHERE id = %s",
+                (old_time, old_time, row_id_2)
+            )
+            conn.commit()
+
+    # Query with hybrid search and decay_half_life_days active
+    results = s.hybrid_search(
+        query_embedding=vec,
+        query_text="database tuning",
+        agent_identity=agent,
+        limit=5,
+        decay_half_life_days=5.0,
+    )
+    
+    assert len(results) == 2
+    # The modern entry should have a higher blended score due to less recency decay
+    assert results[0]["id"] == row_id_1
+    assert results[0]["score"] > results[1]["score"]
+
+
+def test_reranking(store):
+    s, agent = store
+
+    # Load two entries
+    vec = [0.1] * 384
+    # Entry A: Highly relevant to "cross-encoder" query but contains general search terms
+    row_id_a = s.add(
+        agent_identity=agent,
+        target="memory",
+        content="Cross-encoder models yield extreme precision by performing joint query-document attention.",
+        embedding=vec,
+    )
+    # Entry B: Contains search words but is less relevant
+    row_id_b = s.add(
+        agent_identity=agent,
+        target="memory",
+        content="Models that perform vector embeddings search are fast but lack cross-encoder attention.",
+        embedding=vec,
+    )
+
+    # Rerank with query "cross-encoder attention precision"
+    results = s.hybrid_search(
+        query_embedding=vec,
+        query_text="cross-encoder attention precision",
+        agent_identity=agent,
+        limit=5,
+        rerank=True,
+    )
+    assert len(results) == 2
+    # Reranker should prioritize the more relevant joint-attention cross-encoder definition
+    assert results[0]["id"] == row_id_a
+    assert "rerank_score" in results[0]
+
+
+def test_plugin_memory_stats(store):
+    """Verify HexusMemoryProvider plugin executes memory_stats tool call correctly."""
+    from unittest.mock import patch
+    with patch('hexus.MemoryProvider', new=object):
+        from hexus import HexusMemoryProvider
+        s, agent = store
+        
+        # Mock/fake config for HexusMemoryProvider
+        provider = HexusMemoryProvider(config={
+            "dsn": "dbname=hermes_memory user=hermes host=/var/run/postgresql",
+            "embed_on_write": False,
+        })
+        provider._store = s
+        provider._healthy = True
+        
+        res_str = provider.handle_tool_call("memory_stats", {})
+        import json
+        res = json.loads(res_str)
+        assert res["status"] == "ok"
+        assert "database" in res
+        assert "async_writer" in res
+        assert "memory_entries_count" in res["database"]
+        assert "conversations_count" in res["database"]
+
+
+
+
 
 

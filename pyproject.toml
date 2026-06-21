@@ -93,3 +93,4 @@ hexus = ["plugin.yaml", "migrations/*.sql"]
 # `hexus-mcp serve --transport stdio` (or http) is the MCP
 # server entry point. Installed by `pip install hexus[mcp]`.
 hexus-mcp = "mcp_server.cli:main"
+hexus-import = "mcp_server.import_cli:main"

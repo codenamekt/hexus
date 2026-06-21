@@ -705,7 +705,16 @@ class TestMcpWiring:
             "memory_recall_delegations",
             "memory_cleanup",
             "memory_metrics",
+            "memory_entity_graph",
+            "memory_graph_walk",
+            "memory_common_topics",
+            "memory_confirm",
+            "memory_reject",
+            "memory_summarize_session",
+            "memory_retrieve",
+            "headroom_retrieve",
         }.issubset(names), f"missing tools: {names}"
+
 
     def test_every_tool_has_description_and_input_schema(self, store):
         mcp = self._server(store)
@@ -740,3 +749,182 @@ class TestMcpWiring:
         assert "query" in props
         assert "top_k" in props
         assert "agent_identity" in props
+
+
+def test_mcp_graph_tools_round_trip(store):
+    """Verify that we can call entity_graph, graph_walk, and common_topics via FastMCP handlers."""
+    from mcp_server import tools
+
+    agent = agent_of(store) # noqa: SLF001
+
+    # Insert docs containing entities
+    tools.memory_retain(
+        store,
+        {
+            "contents": [
+                "Traefik reverse proxy configuration using docker-compose on https://traefik.io/docs",
+                "Verify docker-compose setup and run a postgres instance.",
+            ],
+            "agent_identity": agent,
+        },
+    )
+
+    # 1. Call entity_graph
+    eg = tools.memory_entity_graph(
+        store,
+        {
+            "entity_type": "url",
+            "entity_value": "https://traefik.io/docs",
+            "agent_identity": agent,
+        },
+    )
+    assert eg["entity"]["value"] == "https://traefik.io/docs"
+    related = [r["value"] for r in eg["related"]]
+    # docker-compose or similar should be related
+    assert any("docker" in r.lower() for r in related)
+
+    # 2. Call graph_walk
+    walk = tools.memory_graph_walk(
+        store,
+        {
+            "entity_type": "url",
+            "entity_value": "https://traefik.io/docs",
+            "agent_identity": agent,
+            "max_depth": 2,
+        },
+    )
+
+    assert len(walk) >= 1
+
+    # 3. Call common_topics
+    topics = tools.memory_common_topics(
+        store,
+        {
+            "agent_identity": agent,
+            "min_strength": 1,
+        },
+    )
+    assert len(topics) >= 1
+
+
+def test_mcp_confirm_reject_summarize_round_trip(store):
+    """Verify that we can call memory_confirm, memory_reject, and memory_summarize_session via FastMCP handlers."""
+    from mcp_server import tools
+
+    agent = agent_of(store) # noqa: SLF001
+
+    # Retain entry
+    retain_res = tools.memory_retain(
+        store,
+        {
+            "contents": ["Some test memory details"],
+            "agent_identity": agent,
+        }
+    )
+    
+    # Browse to get the ID
+    search_res = tools.memory_search(
+        store,
+        {
+            "agent_identity": agent,
+        }
+    )
+    assert search_res["count"] >= 1
+    entry_id = search_res["rows"][0]["id"]
+
+    
+    # 1. Call confirm
+    confirm_res = tools.memory_confirm(
+        store,
+        {
+            "id": entry_id,
+        }
+    )
+    assert confirm_res["id"] == entry_id
+    assert confirm_res["success"] is True
+
+    # 2. Call reject
+    reject_res = tools.memory_reject(
+        store,
+        {
+            "id": entry_id,
+        }
+    )
+    assert reject_res["id"] == entry_id
+    assert reject_res["success"] is True
+
+    # 3. Call summarize_session
+    session_id = "mcp-session-" + agent
+    # Append turns
+    tools.memory_append_turn(
+        store,
+        {
+            "session_id": session_id,
+            "agent_identity": agent,
+            "role": "user",
+            "content": "MCP Turn 1",
+        }
+    )
+    tools.memory_append_turn(
+        store,
+        {
+            "session_id": session_id,
+            "agent_identity": agent,
+            "role": "assistant",
+            "content": "MCP Turn 2",
+        }
+    )
+
+    summary_res = tools.memory_summarize_session(
+        store,
+        {
+            "session_id": session_id,
+            "limit": 2,
+        }
+    )
+    assert summary_res["session_id"] == session_id
+    assert summary_res["turn_count"] == 2
+    assert len(summary_res["summary_turns"]) == 2
+
+
+def test_mcp_retrieve_round_trip(store):
+    """Verify that we can call memory_retrieve via FastMCP handlers."""
+    from mcp_server import tools
+
+    agent = agent_of(store)
+
+    # Long text that will get compressed
+    content_long = "This is a long content to test retrieval of the full memory entries."
+    compressed_text = "[Compressed] This is..."
+
+    row_id = store.add(
+        agent_identity=agent,
+        target="memory",
+        content=content_long,
+        compressed=compressed_text,
+        embedding=[0.1]*384,
+    )
+
+    res = tools.memory_retrieve(
+        store,
+        {
+            "id": row_id,
+        }
+    )
+    assert res["id"] == row_id
+    assert res["found"] is True
+    assert res["content"] == content_long
+
+
+def test_mcp_memory_stats_round_trip(store):
+    """Verify that we can call memory_stats via FastMCP handlers."""
+    from mcp_server import tools
+
+    res = tools.memory_stats(store, {})
+    assert res["status"] == "ok"
+    assert "database" in res
+    assert "async_writer" in res
+    assert "memory_entries_count" in res["database"]
+    assert "conversations_count" in res["database"]
+
+

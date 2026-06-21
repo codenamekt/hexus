@@ -81,7 +81,7 @@ RUN pip install --upgrade pip wheel \
 #   the model is hosted on the Hub as a git LFS repo.
 RUN python -c "import os; print('HF_HOME=', os.environ.get('HF_HOME'), 'EMBED_MODEL=', os.environ.get('EMBED_MODEL', '<unset>'))" \
     && mkdir -p /root/.cache/huggingface \
-    && EMBED_MODEL="$EMBED_MODEL" python -c "import os; from sentence_transformers import SentenceTransformer; m = SentenceTransformer(os.environ['EMBED_MODEL']); print('loaded:', os.environ['EMBED_MODEL'])" \
+    && EMBED_MODEL="$EMBED_MODEL" python -c "import os; from sentence_transformers import SentenceTransformer, CrossEncoder; m1 = SentenceTransformer(os.environ['EMBED_MODEL']); m2 = CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2'); print('loaded both models')" \
     && ls -la /root/.cache/huggingface \
     && ls -la /root/.cache/huggingface/hub 2>/dev/null \
     && du -sh /root/.cache/huggingface
