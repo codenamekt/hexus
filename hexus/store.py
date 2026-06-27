@@ -356,7 +356,13 @@ class MemoryStore:
             with conn.cursor() as cur:
                 for sql_file in sql_files:
                     sql = sql_file.read_text(encoding="utf-8")
-                    cur.execute(sql)
+                    # Split SQL file into individual statements to allow CREATE INDEX CONCURRENTLY to run
+                    # outside of multi-statement transaction blocks in autocommit mode.
+                    statements = [
+                        stmt.strip() for stmt in sql.split(";") if stmt.strip()
+                    ]
+                    for stmt in statements:
+                        cur.execute(stmt)
 
     # -- Built-in memory mirror (called by on_memory_write) ------------------
 
