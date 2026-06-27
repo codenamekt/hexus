@@ -25,10 +25,12 @@ import pytest
 # Structural / fast tests — no model load
 # ---------------------------------------------------------------------------
 
+
 def test_constants():
     """The public constants are pinned to the values the rest of the
     code (and the schema migration) assume."""
     from hexus.embedder import DEFAULT_MODEL, DEFAULT_DIM
+
     assert DEFAULT_MODEL == "sentence-transformers/all-MiniLM-L6-v2"
     assert DEFAULT_DIM == 384
 
@@ -41,6 +43,7 @@ def test_embedder_import_is_fast():
     slow down plugin import (and break hermes-agent's startup time).
     """
     from hexus.embedder import LocalBertEmbedder
+
     e = LocalBertEmbedder()
     assert e.is_loaded is False
     assert e.dim == 384  # constant, not from loaded model
@@ -50,6 +53,7 @@ def test_embedder_custom_model_constant_dim():
     """For a non-default model, dim returns 0 until loaded (we don't
     know the dim ahead of time)."""
     from hexus.embedder import LocalBertEmbedder
+
     e = LocalBertEmbedder(model_name="some/custom-model")
     assert e.dim == 0
     assert e.is_loaded is False
@@ -58,6 +62,7 @@ def test_embedder_custom_model_constant_dim():
 def test_embed_empty_list_returns_empty():
     """Passing an empty list returns an empty list (no model load)."""
     from hexus.embedder import LocalBertEmbedder
+
     e = LocalBertEmbedder()
     assert e.embed([]) == []
     # Still not loaded — empty input doesn't trigger load.
@@ -67,6 +72,7 @@ def test_embed_empty_list_returns_empty():
 def test_embed_filters_whitespace_only():
     """All-whitespace input filters to empty, returns empty. No model load."""
     from hexus.embedder import LocalBertEmbedder
+
     e = LocalBertEmbedder()
     assert e.embed(["", "   ", "\n\t  "]) == []
     assert e.is_loaded is False
@@ -100,6 +106,7 @@ def test_embed_disables_sentence_transformers_progress_bar():
 def test_singleton_returns_same_instance():
     """get_default_embedder is process-wide — same args → same instance."""
     from hexus.embedder import get_default_embedder, reset_default_embedder
+
     reset_default_embedder()
     e1 = get_default_embedder()
     e2 = get_default_embedder()
@@ -111,6 +118,7 @@ def test_singleton_caches_by_model_name():
     """Different model_name → different singleton. (Mostly relevant for
     tests; production uses one model.)"""
     from hexus.embedder import get_default_embedder, reset_default_embedder
+
     reset_default_embedder()
     e_a = get_default_embedder(model_name="model-a")
     e_b = get_default_embedder(model_name="model-b")
@@ -124,6 +132,7 @@ def test_singleton_caches_by_model_name():
 def test_singleton_is_thread_safe():
     """Concurrent get_default_embedder() calls converge on a single instance."""
     from hexus.embedder import get_default_embedder, reset_default_embedder
+
     reset_default_embedder()
     instances: List = []
     barrier = threading.Barrier(8)
@@ -137,8 +146,9 @@ def test_singleton_is_thread_safe():
         t.start()
     for t in threads:
         t.join()
-    assert all(i is instances[0] for i in instances), \
+    assert all(i is instances[0] for i in instances), (
         "all threads must see the same singleton instance"
+    )
     reset_default_embedder()
 
 
@@ -147,6 +157,7 @@ def test_reset_drops_singleton():
     call to construct a fresh instance. Test-only helper, but the
     contract is documented for downstream callers."""
     from hexus.embedder import get_default_embedder, reset_default_embedder
+
     e1 = get_default_embedder()
     reset_default_embedder()
     e2 = get_default_embedder()
@@ -159,6 +170,7 @@ def test_reset_drops_singleton():
 # the operator wants a fast CI run.
 # ---------------------------------------------------------------------------
 
+
 # Fixture: one shared embedder for all real-model tests in this module.
 # Module-scoped so the model load (~1-2s) happens once.
 @pytest.fixture(scope="module")
@@ -166,6 +178,7 @@ def embedder():
     if os.environ.get("SENTENCE_TRANSFORMERS_SKIP_REAL") == "1":
         pytest.skip("SENTENCE_TRANSFORMERS_SKIP_REAL=1")
     from hexus.embedder import LocalBertEmbedder
+
     e = LocalBertEmbedder()
     e.ensure_loaded()
     yield e
@@ -217,11 +230,13 @@ def test_semantic_similarity(embedder):
         nb = math.sqrt(sum(y * y for y in b))
         return dot / (na * nb) if na and nb else 0.0
 
-    vecs = embedder.embed([
-        "How do I configure Postgres connection pooling?",
-        "What's the right way to size a psycopg connection pool?",
-        "The recipe calls for two cups of flour and one egg.",
-    ])
+    vecs = embedder.embed(
+        [
+            "How do I configure Postgres connection pooling?",
+            "What's the right way to size a psycopg connection pool?",
+            "The recipe calls for two cups of flour and one egg.",
+        ]
+    )
     sim_related = cos(vecs[0], vecs[1])
     sim_unrelated = cos(vecs[0], vecs[2])
     assert sim_related > sim_unrelated, (
@@ -244,6 +259,7 @@ def test_embed_filters_empty_in_batch(embedder):
 # embed.py dispatch tests (no model load for the local path — uses a stub)
 # ---------------------------------------------------------------------------
 
+
 def test_embed_no_base_url_uses_local(monkeypatch):
     """embed() with no base_url dispatches to the local embedder."""
     from hexus import embed as embed_fn
@@ -251,6 +267,7 @@ def test_embed_no_base_url_uses_local(monkeypatch):
     class FakeEmbedder:
         def __init__(self):
             self.called_with = None
+
         def embed(self, texts):
             self.called_with = texts
             return [[0.1] * 384]
@@ -268,6 +285,7 @@ def test_embed_no_base_url_default_model(monkeypatch):
     from hexus import embed as embed_fn
 
     captured = {}
+
     class FakeEmbedder:
         def embed(self, texts):
             captured["texts"] = texts
@@ -280,6 +298,7 @@ def test_embed_no_base_url_default_model(monkeypatch):
     monkeypatch.setattr("hexus.embedder.get_default_embedder", fake_getter)
     embed_fn("hello")
     from hexus.embedder import DEFAULT_MODEL
+
     assert captured["model_name"] == DEFAULT_MODEL
 
 
@@ -289,6 +308,7 @@ def test_embed_base_url_dispatches_to_http(monkeypatch):
 
     # Spy: if the local embedder is called, the test fails.
     local_called = {"value": False}
+
     class SpyLocal:
         def embed(self, texts):
             local_called["value"] = True
@@ -300,19 +320,28 @@ def test_embed_base_url_dispatches_to_http(monkeypatch):
     class FakeResp:
         def __init__(self, body):
             self.body = body.encode("utf-8")
+
         def read(self):
             return self.body
-        def __enter__(self): return self
-        def __exit__(self, *a): return False
 
-    fake_response_body = '{"data": [{"embedding": ' + str([0.2] * 384).replace("'", '"') + '}]}'
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    fake_response_body = (
+        '{"data": [{"embedding": ' + str([0.2] * 384).replace("'", '"') + "}]}"
+    )
 
     with patch("urllib.request.urlopen") as urlopen:
         urlopen.return_value = FakeResp(fake_response_body)
         vec = embed_fn("hello", base_url="http://fake:11434")
 
     assert vec == [0.2] * 384
-    assert local_called["value"] is False, "local embedder should not be called when base_url is set"
+    assert local_called["value"] is False, (
+        "local embedder should not be called when base_url is set"
+    )
 
 
 def test_embed_truncates_long_text():
@@ -323,6 +352,7 @@ def test_embed_truncates_long_text():
     from hexus.embed import MAX_INPUT_CHARS
 
     captured = {}
+
     class FakeEmbedder:
         def embed(self, texts):
             captured["lengths"] = [len(t) for t in texts]

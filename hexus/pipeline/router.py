@@ -2,6 +2,7 @@
 import re
 import json
 
+
 class ContentRouter:
     """Pre-processing pipeline to route and compress large memory payloads (> 200 tokens)."""
 
@@ -11,7 +12,7 @@ class ContentRouter:
 
     def maybe_compress(self, text: str) -> str | None:
         """Compress text if it exceeds the token threshold.
-        
+
         Returns the compressed version, or None if the text is under the threshold.
         """
         if not text or len(text) <= self.threshold_chars:
@@ -29,23 +30,26 @@ class ContentRouter:
 
     def _is_json(self, text: str) -> bool:
         text_strip = text.strip()
-        return (text_strip.startswith("{") and text_strip.endswith("}")) or \
-               (text_strip.startswith("[") and text_strip.endswith("]"))
+        return (text_strip.startswith("{") and text_strip.endswith("}")) or (
+            text_strip.startswith("[") and text_strip.endswith("]")
+        )
 
     def _is_log(self, text: str) -> bool:
         log_indicators = [
-            r'\b(?:INFO|ERROR|WARN|WARNING|DEBUG|FATAL|CRITICAL)\b',
-            r'\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}',
-            r'\[\d{2}:\d{2}:\d{2}\]',
+            r"\b(?:INFO|ERROR|WARN|WARNING|DEBUG|FATAL|CRITICAL)\b",
+            r"\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}",
+            r"\[\d{2}:\d{2}:\d{2}\]",
         ]
-        matches = sum(1 for ind in log_indicators if re.search(ind, text, re.IGNORECASE))
+        matches = sum(
+            1 for ind in log_indicators if re.search(ind, text, re.IGNORECASE)
+        )
         return matches >= 1 and len(text.splitlines()) > 5
 
     def _is_code(self, text: str) -> bool:
         code_indicators = [
-            r'\b(def|class|import|from|function|const|let|var|public|private|return|async|await)\b',
-            r'[{}]',
-            r'\b(if|for|while)\s*\(.*\)\s*\{',
+            r"\b(def|class|import|from|function|const|let|var|public|private|return|async|await)\b",
+            r"[{}]",
+            r"\b(if|for|while)\s*\(.*\)\s*\{",
         ]
         matches = sum(1 for ind in code_indicators if re.search(ind, text))
         return matches >= 2
@@ -61,7 +65,7 @@ class ContentRouter:
                 return f"[Compressed JSON Array] length: {len(data)}\nFirst item: {json.dumps(data[0]) if data else 'empty'}"
         except Exception:
             pass
-        return text[:self.threshold_chars] + "\n... [Truncated JSON]"
+        return text[: self.threshold_chars] + "\n... [Truncated JSON]"
 
     def _compress_log(self, text: str) -> str:
         lines = text.splitlines()
@@ -70,13 +74,19 @@ class ContentRouter:
 
         error_lines = []
         for line in lines[3:-3]:
-            if re.search(r'\b(?:ERROR|FATAL|CRITICAL|WARNING|WARN|EXCEPTION|FAIL)\b', line, re.IGNORECASE):
+            if re.search(
+                r"\b(?:ERROR|FATAL|CRITICAL|WARNING|WARN|EXCEPTION|FAIL)\b",
+                line,
+                re.IGNORECASE,
+            ):
                 error_lines.append(line)
 
         filtered = []
         filtered.extend(first_n)
         if error_lines:
-            filtered.append(f"... [Truncated log: showing {len(error_lines)} errors/warnings] ...")
+            filtered.append(
+                f"... [Truncated log: showing {len(error_lines)} errors/warnings] ..."
+            )
             filtered.extend(error_lines[:20])  # Cap at 20 critical lines
         else:
             filtered.append("... [Truncated log: no critical patterns found] ...")
@@ -88,13 +98,13 @@ class ContentRouter:
         lines = text.splitlines()
         compressed_lines = []
         for line in lines:
-            if re.match(r'^\s*(def|class|import|from|async\s+def)\b', line):
+            if re.match(r"^\s*(def|class|import|from|async\s+def)\b", line):
                 compressed_lines.append(line)
-            elif re.match(r'^\s*#.*', line) and len(compressed_lines) < 10:
+            elif re.match(r"^\s*#.*", line) and len(compressed_lines) < 10:
                 compressed_lines.append(line)
 
         if len(compressed_lines) < 3:
-            return text[:self.threshold_chars] + "\n... [Truncated Code]"
+            return text[: self.threshold_chars] + "\n... [Truncated Code]"
 
         return "\n".join(compressed_lines) + "\n... [Truncated Code: definitions only]"
 
@@ -105,4 +115,4 @@ class ContentRouter:
             if len(paragraphs) > 1:
                 summary += "\n\n" + paragraphs[1][:200] + "..."
             return summary + "\n... [Truncated Text]"
-        return text[:self.threshold_chars] + "\n... [Truncated Text]"
+        return text[: self.threshold_chars] + "\n... [Truncated Text]"

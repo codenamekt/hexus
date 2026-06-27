@@ -55,7 +55,10 @@ def _run_psql(sql: str, dsn: str) -> str:
     """Execute SQL via psql, return stdout. Raises on non-zero exit."""
     result = subprocess.run(
         ["psql", dsn, "-tAc", sql],
-        capture_output=True, text=True, env=_psql_env(dsn), check=True,
+        capture_output=True,
+        text=True,
+        env=_psql_env(dsn),
+        check=True,
     )
     return result.stdout.strip()
 
@@ -63,6 +66,7 @@ def _run_psql(sql: str, dsn: str) -> str:
 # ---------------------------------------------------------------------------
 # The tests
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def pg():
@@ -165,7 +169,9 @@ def test_target_check_constraint(pg):
         "  AND contype = 'c'",
         pg,
     )
-    assert "memory" in out and "user" in out, f"CHECK constraint missing or wrong: {out!r}"
+    assert "memory" in out and "user" in out, (
+        f"CHECK constraint missing or wrong: {out!r}"
+    )
 
 
 def test_insert_384_dim_vector_works(pg):
@@ -174,6 +180,7 @@ def test_insert_384_dim_vector_works(pg):
     the suite (the smoke tests clean up by agent_identity; this row
     has a unique random agent)."""
     import secrets
+
     agent = f"migration-test-{secrets.token_hex(4)}"
     try:
         # Build a 384-dim vector literal: "[0.1,0.1,...,0.1]"
@@ -191,7 +198,8 @@ def test_insert_384_dim_vector_works(pg):
         assert out == "384", f"vector_dims returned {out!r}, expected 384"
     finally:
         _run_psql(
-            f"DELETE FROM memory_entries WHERE agent_identity = '{agent}'", pg,
+            f"DELETE FROM memory_entries WHERE agent_identity = '{agent}'",
+            pg,
         )
 
 
@@ -201,14 +209,21 @@ def test_insert_768_dim_vector_rejected(pg):
     dim check provides — even if a buggy embedder produces 768-dim
     vectors, the DB says no."""
     import secrets
+
     agent = f"migration-test-{secrets.token_hex(4)}"
     vec = "[" + ",".join(["0.1"] * 768) + "]"
     # Use a query that we expect to fail; capture the exit code.
     result = subprocess.run(
-        ["psql", pg, "-tAc",
-         f"INSERT INTO memory_entries (agent_identity, target, content, embedding) "
-         f"VALUES ('{agent}', 'memory', 'dim mismatch test', '{vec}'::vector)"],
-        capture_output=True, text=True, env=_psql_env(pg),
+        [
+            "psql",
+            pg,
+            "-tAc",
+            f"INSERT INTO memory_entries (agent_identity, target, content, embedding) "
+            f"VALUES ('{agent}', 'memory', 'dim mismatch test', '{vec}'::vector)",
+        ],
+        capture_output=True,
+        text=True,
+        env=_psql_env(pg),
     )
     assert result.returncode != 0, "DB accepted a 768-dim vector; expected rejection"
     # Make sure the row didn't sneak in.

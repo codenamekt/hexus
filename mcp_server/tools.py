@@ -39,8 +39,6 @@ logger = logging.getLogger(__name__)
 # -----------------------------------------------------------------------
 
 
-
-
 def default_agent_identity() -> str:
     """Return the default `agent_identity` to use when a tool call omits it.
 
@@ -76,15 +74,18 @@ def memory_health(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
             "embedder": {"model": DEFAULT_MODEL, "dim": DEFAULT_DIM},
         }
 
-    n_entries = store.count(agent_identity=None, target=None) if hasattr(store, "count") else None
+    n_entries = (
+        store.count(agent_identity=None, target=None)
+        if hasattr(store, "count")
+        else None
+    )
     return {
         "status": "ok",
         "schema_ok": True,
         "embedder": {
             "model": DEFAULT_MODEL,
             "dim": DEFAULT_DIM,
-            "eager_loaded": os.environ.get("HEXUS_EMBED_EAGER_LOAD", "0")
-            == "1",
+            "eager_loaded": os.environ.get("HEXUS_EMBED_EAGER_LOAD", "0") == "1",
         },
         "row_counts": {
             "memory_entries": n_entries,
@@ -102,7 +103,7 @@ def _coerce_agent_identity(args: Dict[str, Any]) -> str:
 
 def _coerce_target(args: Dict[str, Any]) -> Optional[str]:
     """target ∈ {'memory', 'user', None}. Anything else is rejected.
-    
+
     Empty string is treated as None to match MCP clients that send
     default values as '' rather than omitting the field.
     """
@@ -189,6 +190,7 @@ def memory_retain(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
                 webhook_url = os.environ.get("HEXUS_WEBHOOK_URL")
                 if webhook_url:
                     from hexus.webhook.dispatcher import dispatch_webhook
+
                     dispatch_webhook(
                         url=webhook_url,
                         secret=os.environ.get("HEXUS_WEBHOOK_SECRET"),
@@ -198,7 +200,7 @@ def memory_retain(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
                             "target": target,
                             "content": content,
                             "metadata": meta or {},
-                        }
+                        },
                     )
         except Exception as exc:  # noqa: BLE001
             errors.append(f"add failed for {content[:40]!r}: {exc}")
@@ -273,7 +275,6 @@ def memory_recall(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-
 def memory_search(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
     """List entries (no embedding) — browse / paginate / inspect.
 
@@ -339,6 +340,7 @@ def memory_forget(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
         webhook_url = os.environ.get("HEXUS_WEBHOOK_URL")
         if webhook_url:
             from hexus.webhook.dispatcher import dispatch_webhook
+
             dispatch_webhook(
                 url=webhook_url,
                 secret=os.environ.get("HEXUS_WEBHOOK_SECRET"),
@@ -347,7 +349,7 @@ def memory_forget(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
                     "agent_identity": agent,
                     "target": row[1],
                     "content": row[2],
-                }
+                },
             )
 
     return {
@@ -479,9 +481,7 @@ def memory_count(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
 
     return {
         "memory_entries": store.count(agent_identity=agent, target=target),
-        "conversations": store.count_turns(
-            agent_identity=agent, session_id=session_id
-        ),
+        "conversations": store.count_turns(agent_identity=agent, session_id=session_id),
         "agent_identity": agent,
         "target": target,
         "session_id": session_id,
@@ -589,8 +589,9 @@ def memory_hybrid_search(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, 
     }
 
 
-
-def memory_hybrid_recall_turns(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
+def memory_hybrid_recall_turns(
+    store: MemoryStore, args: Dict[str, Any]
+) -> Dict[str, Any]:
     """Blend semantic vector search and full-text search over conversation turns.
 
     args:
@@ -659,7 +660,9 @@ def memory_hybrid_recall_turns(store: MemoryStore, args: Dict[str, Any]) -> Dict
     }
 
 
-def memory_record_delegation(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
+def memory_record_delegation(
+    store: MemoryStore, args: Dict[str, Any]
+) -> Dict[str, Any]:
     """Record a subagent delegation.
 
     args:
@@ -715,7 +718,9 @@ def memory_record_delegation(store: MemoryStore, args: Dict[str, Any]) -> Dict[s
     }
 
 
-def memory_recall_delegations(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
+def memory_recall_delegations(
+    store: MemoryStore, args: Dict[str, Any]
+) -> Dict[str, Any]:
     """Recall subagent delegations.
 
     args:
@@ -789,7 +794,7 @@ def memory_entity_graph(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, A
     entity_type = args.get("entity_type")
     if not isinstance(entity_type, str) or not entity_type.strip():
         raise ValueError("entity_type must be a non-empty string")
-    
+
     entity_value = args.get("entity_value")
     if not isinstance(entity_value, str) or not entity_value.strip():
         raise ValueError("entity_value must be a non-empty string")
@@ -814,7 +819,7 @@ def memory_graph_walk(store: MemoryStore, args: Dict[str, Any]) -> List[Dict[str
     entity_type = args.get("entity_type")
     if not isinstance(entity_type, str) or not entity_type.strip():
         raise ValueError("entity_type must be a non-empty string")
-    
+
     entity_value = args.get("entity_value")
     if not isinstance(entity_value, str) or not entity_value.strip():
         raise ValueError("entity_value must be a non-empty string")
@@ -838,7 +843,9 @@ def memory_graph_walk(store: MemoryStore, args: Dict[str, Any]) -> List[Dict[str
     )
 
 
-def memory_common_topics(store: MemoryStore, args: Dict[str, Any]) -> List[Dict[str, Any]]:
+def memory_common_topics(
+    store: MemoryStore, args: Dict[str, Any]
+) -> List[Dict[str, Any]]:
     """Retrieve clusters/cliques of heavily co-occurring entities."""
     agent = args.get("agent_identity")
     if isinstance(agent, str) and agent.strip() == "":
@@ -885,7 +892,9 @@ def memory_reject(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
     return {"id": entry_id, "success": success}
 
 
-def memory_summarize_session(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
+def memory_summarize_session(
+    store: MemoryStore, args: Dict[str, Any]
+) -> Dict[str, Any]:
     """Compute the vector centroid of a session's turns and find the K closest turns."""
     session_id = args.get("session_id")
     if not isinstance(session_id, str) or not session_id.strip():
@@ -930,6 +939,7 @@ def memory_stats(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
     # Try to get queue stats from any active AsyncWriter instances
     queue_stats = {}
     from hexus.writer import _active_writers
+
     for obj in _active_writers:
         queue_stats = obj.stats()
         break
@@ -955,7 +965,8 @@ def memory_stats(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "status": "ok",
         "database": db_stats,
-        "async_writer": queue_stats or {
+        "async_writer": queue_stats
+        or {
             "queue_size": 0,
             "queue_max": 256,
             "dropped_total": 0,
@@ -966,7 +977,3 @@ def memory_stats(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
         "background_cleanup": cleanup_stats,
         "background_consolidation": consolidation_stats,
     }
-
-
-
-

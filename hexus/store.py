@@ -53,13 +53,17 @@ logger = logging.getLogger(__name__)
 _cross_encoder_model: Any = None
 _cross_encoder_lock = threading.Lock()
 
+
 def get_cross_encoder() -> Any:
     global _cross_encoder_model
     if _cross_encoder_model is None:
         with _cross_encoder_lock:
             if _cross_encoder_model is None:
                 from sentence_transformers import CrossEncoder
-                _cross_encoder_model = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
+
+                _cross_encoder_model = CrossEncoder(
+                    "cross-encoder/ms-marco-MiniLM-L-6-v2"
+                )
     return _cross_encoder_model
 
 
@@ -111,7 +115,9 @@ class MemoryStore:
             try:
                 entity_extractor_patterns = json.loads(env_patterns)
             except Exception as exc:
-                logger.warning("Failed to parse HEXUS_ENTITY_EXTRACTOR_PATTERNS: %s", exc)
+                logger.warning(
+                    "Failed to parse HEXUS_ENTITY_EXTRACTOR_PATTERNS: %s", exc
+                )
 
         self._entity_extractor = EntityExtractor(
             patterns=entity_extractor_patterns,
@@ -127,11 +133,8 @@ class MemoryStore:
             self._vector_precision = "binary"
         else:
             self._vector_precision = "float32"
-            
+
         self._actual_column_type = "vector(384)"  # Default fallback
-
-
-
 
     # -- Pool lifecycle ------------------------------------------------------
 
@@ -191,10 +194,10 @@ class MemoryStore:
     def adapt_vector_precision(self) -> None:
         """Verify and adapt the database column types and indexes to match the configured precision."""
         precision = self._vector_precision
-        
+
         # Determine target type
         target_type = "halfvec(384)" if precision == "float16" else "vector(384)"
-        
+
         with self._get_pool().connection() as conn:
             with conn.cursor() as cur:
                 # Check current type of memory_entries.embedding
@@ -207,36 +210,64 @@ class MemoryStore:
                 row = cur.fetchone()
                 if not row:
                     return  # Table doesn't exist yet, migrations will handle it.
-                
+
                 current_type = row[0]
                 self._actual_column_type = current_type
                 if current_type != target_type:
-                    logger.info("Adapting database column types from %s to %s to match HEXUS_VECTOR_PRECISION=%s", current_type, target_type, precision)
+                    logger.info(
+                        "Adapting database column types from %s to %s to match HEXUS_VECTOR_PRECISION=%s",
+                        current_type,
+                        target_type,
+                        precision,
+                    )
                     try:
                         # 1. Drop existing indexes that depend on embedding column
-                        cur.execute("DROP INDEX IF EXISTS ix_memory_entries_embedding_hnsw;")
-                        cur.execute("DROP INDEX IF EXISTS ix_conversations_embedding_hnsw;")
-                        cur.execute("DROP INDEX IF EXISTS ix_delegations_embedding_hnsw;")
-                        
+                        cur.execute(
+                            "DROP INDEX IF EXISTS ix_memory_entries_embedding_hnsw;"
+                        )
+                        cur.execute(
+                            "DROP INDEX IF EXISTS ix_conversations_embedding_hnsw;"
+                        )
+                        cur.execute(
+                            "DROP INDEX IF EXISTS ix_delegations_embedding_hnsw;"
+                        )
+
                         # 2. Alter column types
-                        cur.execute(f"ALTER TABLE memory_entries ALTER COLUMN embedding TYPE {target_type};")
-                        cur.execute(f"ALTER TABLE conversations ALTER COLUMN embedding TYPE {target_type};")
-                        cur.execute(f"ALTER TABLE delegations ALTER COLUMN embedding TYPE {target_type};")
-                        
+                        cur.execute(
+                            f"ALTER TABLE memory_entries ALTER COLUMN embedding TYPE {target_type};"
+                        )
+                        cur.execute(
+                            f"ALTER TABLE conversations ALTER COLUMN embedding TYPE {target_type};"
+                        )
+                        cur.execute(
+                            f"ALTER TABLE delegations ALTER COLUMN embedding TYPE {target_type};"
+                        )
+
                         conn.commit()
                         self._actual_column_type = target_type
-                        logger.info("Successfully altered database columns to %s", target_type)
+                        logger.info(
+                            "Successfully altered database columns to %s", target_type
+                        )
                     except Exception as exc:
                         conn.rollback()
-                        logger.warning("Failed to alter database column types (insufficient permissions?): %s", exc)
-                        
+                        logger.warning(
+                            "Failed to alter database column types (insufficient permissions?): %s",
+                            exc,
+                        )
+
                 # Ensure the correct indexes are in place based on precision
                 try:
                     if precision == "float16":
                         # Drop binary indexes if they exist
-                        cur.execute("DROP INDEX IF EXISTS ix_memory_entries_embedding_binary_hnsw;")
-                        cur.execute("DROP INDEX IF EXISTS ix_conversations_embedding_binary_hnsw;")
-                        cur.execute("DROP INDEX IF EXISTS ix_delegations_embedding_binary_hnsw;")
+                        cur.execute(
+                            "DROP INDEX IF EXISTS ix_memory_entries_embedding_binary_hnsw;"
+                        )
+                        cur.execute(
+                            "DROP INDEX IF EXISTS ix_conversations_embedding_binary_hnsw;"
+                        )
+                        cur.execute(
+                            "DROP INDEX IF EXISTS ix_delegations_embedding_binary_hnsw;"
+                        )
 
                         # Create HNSW index on halfvec_cosine_ops
                         cur.execute("""
@@ -256,10 +287,16 @@ class MemoryStore:
                         """)
                     elif precision == "binary":
                         # Drop standard HNSW index to save RAM (if they exist)
-                        cur.execute("DROP INDEX IF EXISTS ix_memory_entries_embedding_hnsw;")
-                        cur.execute("DROP INDEX IF EXISTS ix_conversations_embedding_hnsw;")
-                        cur.execute("DROP INDEX IF EXISTS ix_delegations_embedding_hnsw;")
-                        
+                        cur.execute(
+                            "DROP INDEX IF EXISTS ix_memory_entries_embedding_hnsw;"
+                        )
+                        cur.execute(
+                            "DROP INDEX IF EXISTS ix_conversations_embedding_hnsw;"
+                        )
+                        cur.execute(
+                            "DROP INDEX IF EXISTS ix_delegations_embedding_hnsw;"
+                        )
+
                         # Create the binary HNSW expression indexes
                         cur.execute("""
                             CREATE INDEX IF NOT EXISTS ix_memory_entries_embedding_binary_hnsw
@@ -278,9 +315,15 @@ class MemoryStore:
                         """)
                     else:  # float32
                         # Drop binary indexes if they exist
-                        cur.execute("DROP INDEX IF EXISTS ix_memory_entries_embedding_binary_hnsw;")
-                        cur.execute("DROP INDEX IF EXISTS ix_conversations_embedding_binary_hnsw;")
-                        cur.execute("DROP INDEX IF EXISTS ix_delegations_embedding_binary_hnsw;")
+                        cur.execute(
+                            "DROP INDEX IF EXISTS ix_memory_entries_embedding_binary_hnsw;"
+                        )
+                        cur.execute(
+                            "DROP INDEX IF EXISTS ix_conversations_embedding_binary_hnsw;"
+                        )
+                        cur.execute(
+                            "DROP INDEX IF EXISTS ix_delegations_embedding_binary_hnsw;"
+                        )
 
                         # Create HNSW index on vector_cosine_ops
                         cur.execute("""
@@ -301,7 +344,9 @@ class MemoryStore:
                     conn.commit()
                 except Exception as exc:
                     conn.rollback()
-                    logger.warning("Failed to create/ensure quantization indexes: %s", exc)
+                    logger.warning(
+                        "Failed to create/ensure quantization indexes: %s", exc
+                    )
 
     def apply_migration_as_admin(self, *, admin_dsn: str) -> None:
         """One-shot admin path: run the full migrations with privileged creds."""
@@ -355,7 +400,7 @@ class MemoryStore:
                     # Duplicate found! Merge metadata
                     existing_id = row["id"]
                     existing_meta = dict(row["metadata"] or {})
-                    
+
                     # Merge logic: append provenance from new metadata
                     new_provenance = meta.get("provenance")
                     if new_provenance:
@@ -364,7 +409,7 @@ class MemoryStore:
                             existing_provenances = []
                         elif not isinstance(existing_provenances, list):
                             existing_provenances = [existing_provenances]
-                        
+
                         if isinstance(new_provenance, list):
                             for p in new_provenance:
                                 if p not in existing_provenances:
@@ -373,22 +418,22 @@ class MemoryStore:
                             if new_provenance not in existing_provenances:
                                 existing_provenances.append(new_provenance)
                         existing_meta["provenance"] = existing_provenances
-                    
+
                     # Merge session_ids
                     existing_sids = existing_meta.setdefault("sessions", [])
                     if not isinstance(existing_sids, list):
                         existing_sids = [existing_sids]
                         existing_meta["sessions"] = existing_sids
-                    
+
                     # Also collect existing session_id if present
                     orig_sid = existing_meta.get("session_id")
                     if orig_sid and orig_sid not in existing_sids:
                         existing_sids.append(orig_sid)
-                        
+
                     new_sid = meta.get("session_id")
                     if new_sid and new_sid not in existing_sids:
                         existing_sids.append(new_sid)
-                            
+
                     # Update metadata on the existing row
                     cur.execute(
                         """
@@ -399,7 +444,7 @@ class MemoryStore:
                         (json.dumps(existing_meta), existing_id),
                     )
                     conn.commit()
-                    
+
                     if compressed:
                         self._ccr_cache.set(existing_id, content)
                     return None
@@ -414,22 +459,29 @@ class MemoryStore:
                     ON CONFLICT (agent_identity, target, content) DO NOTHING
                     RETURNING id
                     """,
-                    (agent_identity, target, content, vec_literal, meta_json, compressed, content_hash),
+                    (
+                        agent_identity,
+                        target,
+                        content,
+                        vec_literal,
+                        meta_json,
+                        compressed,
+                        content_hash,
+                    ),
                 )
                 res = cur.fetchone()
                 conn.commit()
-                
+
                 row_id = None
                 if res:
                     if isinstance(res, dict):
                         row_id = res.get("id")
                     else:
                         row_id = res[0]
-                
+
                 if row_id and compressed:
                     self._ccr_cache.set(row_id, content)
                 return row_id
-
 
     def replace(
         self,
@@ -480,7 +532,16 @@ class MemoryStore:
                         AND target = %s
                         AND content LIKE %s
                     """,
-                    (new_content, vec_literal, new_entities_json, compressed, content_hash, agent_identity, target, f"%{old_text}%"),
+                    (
+                        new_content,
+                        vec_literal,
+                        new_entities_json,
+                        compressed,
+                        content_hash,
+                        agent_identity,
+                        target,
+                        f"%{old_text}%",
+                    ),
                 )
                 updated = cur.rowcount
                 conn.commit()
@@ -490,7 +551,6 @@ class MemoryStore:
                         self._ccr_cache.set(rid, new_content)
 
                 return int(updated)
-
 
     def remove(
         self,
@@ -588,7 +648,11 @@ class MemoryStore:
             params.append(platform)
         where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
 
-        cast_type = "halfvec" if "halfvec" in getattr(self, "_actual_column_type", "vector(384)") else "vector"
+        cast_type = (
+            "halfvec"
+            if "halfvec" in getattr(self, "_actual_column_type", "vector(384)")
+            else "vector"
+        )
 
         if self._vector_precision == "binary":
             db_limit = max(limit * 10, 50)
@@ -626,7 +690,14 @@ class MemoryStore:
                         [vec_literal] + params + [vec_literal, db_limit],
                     )
                     rows = list(cur.fetchall())
-                logger.debug("DEBUG_SEARCH_RAW: rows_len=%d data=%r", len(rows), [{'id': r['id'], 'content': r['content'], 'score': r['score']} for r in rows])
+                logger.debug(
+                    "DEBUG_SEARCH_RAW: rows_len=%d data=%r",
+                    len(rows),
+                    [
+                        {"id": r["id"], "content": r["content"], "score": r["score"]}
+                        for r in rows
+                    ],
+                )
 
         # Apply boost & decay
         rows = self._apply_recall_boost(rows, recall_boost_weight)
@@ -635,13 +706,20 @@ class MemoryStore:
 
         if rerank and query_text and rows:
             model = get_cross_encoder()
-            pairs = [[query_text, r.get("compressed") or r.get("content")] for r in rows]
+            pairs = [
+                [query_text, r.get("compressed") or r.get("content")] for r in rows
+            ]
             rerank_scores = model.predict(pairs)
             for r, rerank_score in zip(rows, rerank_scores):
                 r["rerank_score"] = float(rerank_score)
                 r["score"] = r["rerank_score"]
 
-        if self._vector_precision == "binary" or decay_half_life_days > 0.0 or recall_boost_weight > 0.0 or rerank:
+        if (
+            self._vector_precision == "binary"
+            or decay_half_life_days > 0.0
+            or recall_boost_weight > 0.0
+            or rerank
+        ):
             rows = sorted(rows, key=lambda r: r.get("score", 0.0), reverse=True)
 
         rows = rows[:limit]
@@ -657,7 +735,6 @@ class MemoryStore:
                     r["content"] = r["compressed"]
 
         return rows
-
 
     def hybrid_search(
         self,
@@ -697,7 +774,7 @@ class MemoryStore:
             return rows
 
         vec_literal = to_hexus_literal(query_embedding)
-        
+
         clauses: List[str] = []
         params: List[Any] = []
         if agent_identity:
@@ -709,7 +786,7 @@ class MemoryStore:
         if platform:
             clauses.append("metadata->>'platform' = %s")
             params.append(platform)
-            
+
         where = ("AND " + " AND ".join(clauses)) if clauses else ""
 
         db_limit = max(limit, 50) if rerank else limit
@@ -753,9 +830,9 @@ class MemoryStore:
         for p in params:
             v_params.append(p)
         v_params.extend([vec_literal, db_limit])
-        
+
         t_params = [query_text, query_text] + params + [db_limit]
-        
+
         all_params = v_params + t_params + [vector_weight, text_weight, db_limit]
 
         with self._get_pool().connection() as conn:
@@ -771,6 +848,7 @@ class MemoryStore:
             if isinstance(ts_val, str):
                 try:
                     from datetime import datetime as dt
+
                     ts_val = dt.fromisoformat(ts_val)
                 except Exception:
                     pass
@@ -779,7 +857,9 @@ class MemoryStore:
                     ts_val = ts_val.replace(tzinfo=timezone.utc)
                 age_days = (now - ts_val).total_seconds() / 86400.0
                 if decay_half_life_days > 0.0:
-                    r["recency_score"] = math.exp(-math.log(2.0) * age_days / decay_half_life_days)
+                    r["recency_score"] = math.exp(
+                        -math.log(2.0) * age_days / decay_half_life_days
+                    )
                 else:
                     r["recency_score"] = 1.0
             else:
@@ -799,7 +879,9 @@ class MemoryStore:
 
         if rerank and rows:
             model = get_cross_encoder()
-            pairs = [[query_text, r.get("compressed") or r.get("content")] for r in rows]
+            pairs = [
+                [query_text, r.get("compressed") or r.get("content")] for r in rows
+            ]
             rerank_scores = model.predict(pairs)
             for r, rerank_score in zip(rows, rerank_scores):
                 r["rerank_score"] = float(rerank_score)
@@ -868,6 +950,7 @@ class MemoryStore:
         Returns: {'parsed': N, 'inserted': M, 'skipped': K} where N=M+K.
         """
         from pathlib import Path as _Path
+
         p = _Path(file_path)
         if not p.exists():
             return {"parsed": 0, "inserted": 0, "skipped": 0}
@@ -937,7 +1020,6 @@ class MemoryStore:
         meta_json = json.dumps(meta)
         vec_literal = to_hexus_literal(embedding) if embedding is not None else None
 
-
         with self._get_pool().connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(
@@ -980,7 +1062,11 @@ class MemoryStore:
             params.append(platform)
         where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
 
-        cast_type = "halfvec" if "halfvec" in getattr(self, "_actual_column_type", "vector(384)") else "vector"
+        cast_type = (
+            "halfvec"
+            if "halfvec" in getattr(self, "_actual_column_type", "vector(384)")
+            else "vector"
+        )
 
         if self._vector_precision == "binary":
             db_limit = max(limit * 10, 50)
@@ -1018,7 +1104,11 @@ class MemoryStore:
         rows = self._apply_recall_boost(rows, recall_boost_weight)
         rows = self._apply_temporal_decay(rows, decay_half_life_days)
 
-        if self._vector_precision == "binary" or decay_half_life_days > 0.0 or recall_boost_weight > 0.0:
+        if (
+            self._vector_precision == "binary"
+            or decay_half_life_days > 0.0
+            or recall_boost_weight > 0.0
+        ):
             rows = sorted(rows, key=lambda r: r.get("score", 0.0), reverse=True)
 
         if min_similarity > 0:
@@ -1073,7 +1163,7 @@ class MemoryStore:
         if platform:
             clauses.append("metadata->>'platform' = %s")
             params.append(platform)
-            
+
         where = ("AND " + " AND ".join(clauses)) if clauses else ""
 
         sql = f"""
@@ -1114,9 +1204,9 @@ class MemoryStore:
         for p in params:
             v_params.append(p)
         v_params.extend([vec_literal, limit])
-        
+
         t_params = [query_text, query_text] + params + [limit]
-        
+
         all_params = v_params + t_params + [vector_weight, text_weight, limit]
 
         with self._get_pool().connection() as conn:
@@ -1162,7 +1252,15 @@ class MemoryStore:
                     VALUES (%s, %s, %s, %s, %s, %s::vector, %s::jsonb)
                     RETURNING id
                     """,
-                    (parent_session_id, child_session_id, agent_identity, task, result, vec_literal, meta_json),
+                    (
+                        parent_session_id,
+                        child_session_id,
+                        agent_identity,
+                        task,
+                        result,
+                        vec_literal,
+                        meta_json,
+                    ),
                 )
                 row = cur.fetchone()
                 conn.commit()
@@ -1195,7 +1293,11 @@ class MemoryStore:
             params.append(platform)
         where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
 
-        cast_type = "halfvec" if "halfvec" in getattr(self, "_actual_column_type", "vector(384)") else "vector"
+        cast_type = (
+            "halfvec"
+            if "halfvec" in getattr(self, "_actual_column_type", "vector(384)")
+            else "vector"
+        )
 
         if self._vector_precision == "binary":
             db_limit = max(limit * 10, 50)
@@ -1233,7 +1335,11 @@ class MemoryStore:
         rows = self._apply_recall_boost(rows, recall_boost_weight)
         rows = self._apply_temporal_decay(rows, decay_half_life_days)
 
-        if self._vector_precision == "binary" or decay_half_life_days > 0.0 or recall_boost_weight > 0.0:
+        if (
+            self._vector_precision == "binary"
+            or decay_half_life_days > 0.0
+            or recall_boost_weight > 0.0
+        ):
             rows = sorted(rows, key=lambda r: r.get("score", 0.0), reverse=True)
 
         if min_similarity > 0:
@@ -1256,15 +1362,26 @@ class MemoryStore:
         with self._get_pool().connection() as conn:
             with conn.cursor() as cur:
                 if conversations_ttl_days is not None and conversations_ttl_days > 0:
-                    limit_date = datetime.now(timezone.utc) - timedelta(days=conversations_ttl_days)
-                    cur.execute("DELETE FROM conversations WHERE ts < %s", (limit_date,))
+                    limit_date = datetime.now(timezone.utc) - timedelta(
+                        days=conversations_ttl_days
+                    )
+                    cur.execute(
+                        "DELETE FROM conversations WHERE ts < %s", (limit_date,)
+                    )
                     deleted["conversations"] = cur.rowcount
                 if memories_ttl_days is not None and memories_ttl_days > 0:
-                    limit_date = datetime.now(timezone.utc) - timedelta(days=memories_ttl_days)
-                    cur.execute("DELETE FROM memory_entries WHERE updated_at < %s", (limit_date,))
+                    limit_date = datetime.now(timezone.utc) - timedelta(
+                        days=memories_ttl_days
+                    )
+                    cur.execute(
+                        "DELETE FROM memory_entries WHERE updated_at < %s",
+                        (limit_date,),
+                    )
                     deleted["memory_entries"] = cur.rowcount
                 if delegations_ttl_days is not None and delegations_ttl_days > 0:
-                    limit_date = datetime.now(timezone.utc) - timedelta(days=delegations_ttl_days)
+                    limit_date = datetime.now(timezone.utc) - timedelta(
+                        days=delegations_ttl_days
+                    )
                     cur.execute("DELETE FROM delegations WHERE ts < %s", (limit_date,))
                     deleted["delegations"] = cur.rowcount
                 conn.commit()
@@ -1321,9 +1438,17 @@ class MemoryStore:
                     cur.execute("SELECT to_regclass('memory_entries') IS NOT NULL")
                     has_table = bool(cur.fetchone()[0])
                     if not has_table:
-                        return {"ok": False, "error": "memory_entries table missing", "row_count": 0}
+                        return {
+                            "ok": False,
+                            "error": "memory_entries table missing",
+                            "row_count": 0,
+                        }
                     cur.execute("SELECT COUNT(*) FROM memory_entries")
-                    return {"ok": True, "error": "", "row_count": int(cur.fetchone()[0])}
+                    return {
+                        "ok": True,
+                        "error": "",
+                        "row_count": int(cur.fetchone()[0]),
+                    }
         except Exception as exc:  # noqa: BLE001
             return {"ok": False, "error": str(exc)[:200], "row_count": 0}
 
@@ -1435,7 +1560,9 @@ class MemoryStore:
 
         return data
 
-    def _apply_recall_boost(self, rows: List[Dict[str, Any]], boost_weight: float) -> List[Dict[str, Any]]:
+    def _apply_recall_boost(
+        self, rows: List[Dict[str, Any]], boost_weight: float
+    ) -> List[Dict[str, Any]]:
         if boost_weight <= 0.0:
             return rows
         for r in rows:
@@ -1448,7 +1575,9 @@ class MemoryStore:
             r["score"] = r["score"] * (1.0 + boost_weight * math.log(1 + recall_count))
         return rows
 
-    def _apply_temporal_decay(self, rows: List[Dict[str, Any]], half_life_days: float) -> List[Dict[str, Any]]:
+    def _apply_temporal_decay(
+        self, rows: List[Dict[str, Any]], half_life_days: float
+    ) -> List[Dict[str, Any]]:
         if half_life_days <= 0.0:
             return rows
         now = datetime.now(timezone.utc)
@@ -1457,23 +1586,26 @@ class MemoryStore:
             if isinstance(ts_val, str):
                 try:
                     from datetime import datetime as dt
+
                     ts_val = dt.fromisoformat(ts_val)
                 except Exception:
                     continue
             if not ts_val:
                 continue
-            
+
             # Ensure ts_val has timezone info (psycopg datetimes are timezone-aware, now is utc)
             if ts_val.tzinfo is None:
                 ts_val = ts_val.replace(tzinfo=timezone.utc)
-                
+
             age_days = (now - ts_val).total_seconds() / 86400.0
             # exponential decay: score * 2^(-age/half_life)
             decay = math.exp(-math.log(2.0) * age_days / half_life_days)
             r["score"] = r["score"] * decay
         return rows
 
-    def _apply_min_confidence(self, rows: List[Dict[str, Any]], min_confidence: float) -> List[Dict[str, Any]]:
+    def _apply_min_confidence(
+        self, rows: List[Dict[str, Any]], min_confidence: float
+    ) -> List[Dict[str, Any]]:
         if min_confidence <= 0.0:
             return rows
         filtered = []
@@ -1532,7 +1664,6 @@ class MemoryStore:
                 conn.commit()
                 return updated > 0
 
-
     def increment_recall_counts(self, table: str, ids: List[int]) -> None:
         if not ids:
             return
@@ -1563,7 +1694,7 @@ class MemoryStore:
     ) -> Dict[str, Any]:
         """Find other entities that co-occur with the given entity."""
         query_entity_json = json.dumps([{"type": entity_type, "value": entity_value}])
-        
+
         sql = """
         WITH source_entries AS (
             SELECT id, content, metadata, updated_at
@@ -1587,7 +1718,14 @@ class MemoryStore:
         ORDER BY co_occurrences DESC
         LIMIT %s
         """
-        params = [query_entity_json, agent_identity, agent_identity, entity_type, entity_value, limit]
+        params = [
+            query_entity_json,
+            agent_identity,
+            agent_identity,
+            entity_type,
+            entity_value,
+            limit,
+        ]
         with self._get_pool().connection() as conn:
             with conn.cursor(row_factory=dict_row) as cur:
                 cur.execute(sql, params)
@@ -1648,14 +1786,20 @@ class MemoryStore:
         LIMIT %s
         """
         params = [
-            entity_type, entity_value,
-            entity_type, entity_value,
-            agent_identity, agent_identity,
-            entity_type, entity_value,
+            entity_type,
+            entity_value,
+            entity_type,
+            entity_value,
+            agent_identity,
+            agent_identity,
+            entity_type,
+            entity_value,
             max_depth,
-            agent_identity, agent_identity,
-            entity_type, entity_value,
-            limit
+            agent_identity,
+            agent_identity,
+            entity_type,
+            entity_value,
+            limit,
         ]
         with self._get_pool().connection() as conn:
             with conn.cursor(row_factory=dict_row) as cur:
@@ -1739,11 +1883,12 @@ class MemoryStore:
                     "summary_turns": rows,
                 }
 
+    # TODO: Implement a background LLM reflection/consolidation loop (Lightweight LLM Re-Ranking / Reflection Loop)
+    # that runs when the agent is idle to group/summarize low-confidence or heavily co-occurring memory entries.
 
-# TODO: Implement a background LLM reflection/consolidation loop (Lightweight LLM Re-Ranking / Reflection Loop)
-# that runs when the agent is idle to group/summarize low-confidence or heavily co-occurring memory entries.
-
-    def consolidate_low_confidence_memories(self, agent_identity: Optional[str] = None) -> Dict[str, Any]:
+    def consolidate_low_confidence_memories(
+        self, agent_identity: Optional[str] = None
+    ) -> Dict[str, Any]:
         """Query low-confidence (frequently rejected) memories and send them to the LLM for pruning/merging."""
         import json
         import urllib.request
@@ -1752,11 +1897,15 @@ class MemoryStore:
         from hexus.store import dict_row
 
         api_base = os.environ.get("LLM_API_BASE") or "http://headroom:8787/v1"
-        api_key = os.environ.get("HEADROOM_INTERNAL_TOKEN") or os.environ.get("LITELLM_MASTER_KEY")
+        api_key = os.environ.get("HEADROOM_INTERNAL_TOKEN") or os.environ.get(
+            "LITELLM_MASTER_KEY"
+        )
         summary_model = os.environ.get("HEXUS_SUMMARY_MODEL")
-        
+
         if not summary_model:
-            logger.warning("HEXUS_SUMMARY_MODEL is not set. Skipping low-confidence memory consolidation.")
+            logger.warning(
+                "HEXUS_SUMMARY_MODEL is not set. Skipping low-confidence memory consolidation."
+            )
             return {"status": "skipped", "reason": "HEXUS_SUMMARY_MODEL not set"}
 
         # 1. Fetch candidates
@@ -1777,7 +1926,11 @@ class MemoryStore:
         query += " LIMIT 20"
 
         with self._get_pool().connection() as conn:
-            with conn.cursor(row_factory=dict_row) if hasattr(conn, "cursor") else conn.cursor() as cur:
+            with (
+                conn.cursor(row_factory=dict_row)
+                if hasattr(conn, "cursor")
+                else conn.cursor() as cur
+            ):
                 cur.execute(query, params)
                 rows = list(cur.fetchall())
 
@@ -1785,7 +1938,12 @@ class MemoryStore:
             return {"status": "ok", "processed": 0, "deletions": 0, "replacements": 0}
 
         # 2. Call LLM
-        memories_str = "\n".join([f"- [ID: {r['id']}] (Target: {r['target']}) \"{r['content']}\"" for r in rows])
+        memories_str = "\n".join(
+            [
+                f'- [ID: {r["id"]}] (Target: {r["target"]}) "{r["content"]}"'
+                for r in rows
+            ]
+        )
         prompt = (
             "You are an AI memory manager. Analyze the following low-confidence/frequently rejected memory entries "
             "and decide what to do with them. Redundant, contradiction, obsolete, or incorrect facts should be deleted. "
@@ -1793,9 +1951,9 @@ class MemoryStore:
             f"Memories:\n{memories_str}\n\n"
             "Respond ONLY with a JSON object matching this schema. Do not include markdown code block formatting or explanations:\n"
             "{\n"
-            "  \"deletions\": [id, id, ...],\n"
-            "  \"replacements\": [\n"
-            "    {\"ids\": [id, id, ...], \"content\": \"consolidated text\", \"target\": \"memory\"}\n"
+            '  "deletions": [id, id, ...],\n'
+            '  "replacements": [\n'
+            '    {"ids": [id, id, ...], "content": "consolidated text", "target": "memory"}\n'
             "  ]\n"
             "}"
         )
@@ -1803,11 +1961,14 @@ class MemoryStore:
         payload = {
             "model": summary_model,
             "messages": [
-                {"role": "system", "content": "You are a database cleanup manager. Output ONLY raw valid JSON."},
-                {"role": "user", "content": prompt}
+                {
+                    "role": "system",
+                    "content": "You are a database cleanup manager. Output ONLY raw valid JSON.",
+                },
+                {"role": "user", "content": prompt},
             ],
             "temperature": 0.2,
-            "max_tokens": 800
+            "max_tokens": 800,
         }
 
         url = f"{api_base.rstrip('/')}/chat/completions"
@@ -1815,7 +1976,7 @@ class MemoryStore:
             req = urllib.request.Request(
                 url,
                 data=json.dumps(payload).encode("utf-8"),
-                headers={"Content-Type": "application/json"}
+                headers={"Content-Type": "application/json"},
             )
             if api_key:
                 req.add_header("Authorization", f"Bearer {api_key}")
@@ -1823,7 +1984,9 @@ class MemoryStore:
                 resp_data = json.loads(resp.read().decode("utf-8"))
                 llm_response = resp_data["choices"][0]["message"]["content"].strip()
         except Exception as exc:
-            logger.error("Failed to query LLM for low-confidence memory consolidation: %s", exc)
+            logger.error(
+                "Failed to query LLM for low-confidence memory consolidation: %s", exc
+            )
             return {"status": "error", "reason": f"LLM query failed: {exc}"}
 
         # Parse JSON
@@ -1837,7 +2000,11 @@ class MemoryStore:
                 llm_response = "\n".join(lines).strip()
             data = json.loads(llm_response)
         except Exception as exc:
-            logger.error("Failed to parse LLM consolidation response JSON: %s. Response: %r", exc, llm_response)
+            logger.error(
+                "Failed to parse LLM consolidation response JSON: %s. Response: %r",
+                exc,
+                llm_response,
+            )
             return {"status": "error", "reason": f"JSON parse failed: {exc}"}
 
         deletions = data.get("deletions", [])
@@ -1852,7 +2019,10 @@ class MemoryStore:
             if valid_del_ids:
                 with self._get_pool().connection() as conn:
                     with conn.cursor() as cur:
-                        cur.execute("DELETE FROM memory_entries WHERE id = ANY(%s)", (valid_del_ids,))
+                        cur.execute(
+                            "DELETE FROM memory_entries WHERE id = ANY(%s)",
+                            (valid_del_ids,),
+                        )
                         deleted_count += cur.rowcount
                         conn.commit()
 
@@ -1861,15 +2031,23 @@ class MemoryStore:
             rep_ids = rep.get("ids", [])
             rep_content = rep.get("content", "").strip()
             rep_target = rep.get("target", "memory")
-            
+
             valid_rep_ids = [r["id"] for r in rows if r["id"] in rep_ids]
             if valid_rep_ids and rep_content:
                 with self._get_pool().connection() as conn:
                     with conn.cursor() as cur:
-                        cur.execute("DELETE FROM memory_entries WHERE id = ANY(%s)", (valid_rep_ids,))
+                        cur.execute(
+                            "DELETE FROM memory_entries WHERE id = ANY(%s)",
+                            (valid_rep_ids,),
+                        )
                         conn.commit()
-                agent_id = next((r["agent_identity"] for r in rows if r["id"] in valid_rep_ids), agent_identity or "default")
-                self.add(agent_identity=agent_id, target=rep_target, content=rep_content)
+                agent_id = next(
+                    (r["agent_identity"] for r in rows if r["id"] in valid_rep_ids),
+                    agent_identity or "default",
+                )
+                self.add(
+                    agent_identity=agent_id, target=rep_target, content=rep_content
+                )
                 replaced_count += len(valid_rep_ids)
 
         return {
@@ -1879,7 +2057,9 @@ class MemoryStore:
             "replacements": replaced_count,
         }
 
-    def consolidate_cooccurring_memories(self, agent_identity: Optional[str] = None) -> Dict[str, Any]:
+    def consolidate_cooccurring_memories(
+        self, agent_identity: Optional[str] = None
+    ) -> Dict[str, Any]:
         """Query clusters of co-occurring entities and consolidate their memories using the LLM."""
         import json
         import urllib.request
@@ -1888,14 +2068,20 @@ class MemoryStore:
         from hexus.store import dict_row
 
         api_base = os.environ.get("LLM_API_BASE") or "http://headroom:8787/v1"
-        api_key = os.environ.get("HEADROOM_INTERNAL_TOKEN") or os.environ.get("LITELLM_MASTER_KEY")
+        api_key = os.environ.get("HEADROOM_INTERNAL_TOKEN") or os.environ.get(
+            "LITELLM_MASTER_KEY"
+        )
         summary_model = os.environ.get("HEXUS_SUMMARY_MODEL")
-        
+
         if not summary_model:
-            logger.warning("HEXUS_SUMMARY_MODEL is not set. Skipping co-occurring memory consolidation.")
+            logger.warning(
+                "HEXUS_SUMMARY_MODEL is not set. Skipping co-occurring memory consolidation."
+            )
             return {"status": "skipped", "reason": "HEXUS_SUMMARY_MODEL not set"}
 
-        topics = self.common_topics(agent_identity=agent_identity, min_strength=3, limit=5)
+        topics = self.common_topics(
+            agent_identity=agent_identity, min_strength=3, limit=5
+        )
         if not topics:
             return {"status": "ok", "processed_topics": 0, "replacements": 0}
 
@@ -1920,7 +2106,11 @@ class MemoryStore:
             params = [agent_identity, agent_identity, meta_a, meta_b]
 
             with self._get_pool().connection() as conn:
-                with conn.cursor(row_factory=dict_row) if hasattr(conn, "cursor") else conn.cursor() as cur:
+                with (
+                    conn.cursor(row_factory=dict_row)
+                    if hasattr(conn, "cursor")
+                    else conn.cursor() as cur
+                ):
                     cur.execute(query, params)
                     rows = list(cur.fetchall())
 
@@ -1931,7 +2121,12 @@ class MemoryStore:
 
             processed_topics += 1
 
-            memories_str = "\n".join([f"- [ID: {r['id']}] (Target: {r['target']}) \"{r['content']}\"" for r in rows])
+            memories_str = "\n".join(
+                [
+                    f'- [ID: {r["id"]}] (Target: {r["target"]}) "{r["content"]}"'
+                    for r in rows
+                ]
+            )
             prompt = (
                 "You are an AI memory manager. The following memory entries relate to the same concepts "
                 f"({val_a} and {val_b}) and contain redundant or overlapping information.\n\n"
@@ -1939,20 +2134,23 @@ class MemoryStore:
                 "Consolidate and summarize these entries into a single, high-signal, comprehensive memory entry "
                 "to clean up the database. Respond ONLY with a JSON object matching this schema. Do not include markdown code block formatting or explanations:\n"
                 "{\n"
-                "  \"ids_to_replace\": [id, id, ...],\n"
-                "  \"consolidated_content\": \"consolidated text\",\n"
-                "  \"target\": \"memory\"\n"
+                '  "ids_to_replace": [id, id, ...],\n'
+                '  "consolidated_content": "consolidated text",\n'
+                '  "target": "memory"\n'
                 "}"
             )
 
             payload = {
                 "model": summary_model,
                 "messages": [
-                    {"role": "system", "content": "You are a database consolidation manager. Output ONLY raw valid JSON."},
-                    {"role": "user", "content": prompt}
+                    {
+                        "role": "system",
+                        "content": "You are a database consolidation manager. Output ONLY raw valid JSON.",
+                    },
+                    {"role": "user", "content": prompt},
                 ],
                 "temperature": 0.2,
-                "max_tokens": 800
+                "max_tokens": 800,
             }
 
             url = f"{api_base.rstrip('/')}/chat/completions"
@@ -1960,7 +2158,7 @@ class MemoryStore:
                 req = urllib.request.Request(
                     url,
                     data=json.dumps(payload).encode("utf-8"),
-                    headers={"Content-Type": "application/json"}
+                    headers={"Content-Type": "application/json"},
                 )
                 if api_key:
                     req.add_header("Authorization", f"Bearer {api_key}")
@@ -1981,7 +2179,11 @@ class MemoryStore:
                     llm_response = "\n".join(lines).strip()
                 data = json.loads(llm_response)
             except Exception as exc:
-                logger.error("Failed to parse LLM topic consolidation JSON: %s. Response: %r", exc, llm_response)
+                logger.error(
+                    "Failed to parse LLM topic consolidation JSON: %s. Response: %r",
+                    exc,
+                    llm_response,
+                )
                 continue
 
             ids_to_replace = data.get("ids_to_replace", [])
@@ -1992,10 +2194,20 @@ class MemoryStore:
             if len(valid_ids) >= 2 and consolidated_content:
                 with self._get_pool().connection() as conn:
                     with conn.cursor() as cur:
-                        cur.execute("DELETE FROM memory_entries WHERE id = ANY(%s)", (valid_ids,))
+                        cur.execute(
+                            "DELETE FROM memory_entries WHERE id = ANY(%s)",
+                            (valid_ids,),
+                        )
                         conn.commit()
-                agent_id = next((r["agent_identity"] for r in rows if r["id"] in valid_ids), agent_identity or "default")
-                self.add(agent_identity=agent_id, target=rep_target, content=consolidated_content)
+                agent_id = next(
+                    (r["agent_identity"] for r in rows if r["id"] in valid_ids),
+                    agent_identity or "default",
+                )
+                self.add(
+                    agent_identity=agent_id,
+                    target=rep_target,
+                    content=consolidated_content,
+                )
                 replaced_count += len(valid_ids)
                 processed_ids.update(valid_ids)
 
@@ -2004,7 +2216,3 @@ class MemoryStore:
             "processed_topics": processed_topics,
             "replacements": replaced_count,
         }
-
-
-
-

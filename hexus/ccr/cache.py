@@ -2,6 +2,7 @@
 import threading
 from typing import Dict, Optional
 
+
 class CCRCache:
     """Thread-safe in-memory cache mapping memory_id (int) to compressed text (str)."""
 

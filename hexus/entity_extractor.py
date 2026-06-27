@@ -3,13 +3,13 @@ from typing import List, Dict
 
 DEFAULT_PATTERNS = {
     "url": r'https?://[^\s<>"]+',
-    "domain": r'\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b',
-    "email": r'\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\b',
-    "file_path": r'(?<![\w.-])(?:/[\w.-]+)+\.\w+\b',
-    "version": r'\bv?\d+\.\d+(?:\.\d+)?(?:-[a-zA-Z0-9]+)?\b',
-    "ip_address": r'\b(?:\d{1,3}\.){3}\d{1,3}\b',
-    "docker_image": r'\b[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+(?::[a-zA-Z0-9_.-]+)?\b|\b[a-zA-Z0-9_.-]+:[a-zA-Z0-9_.-]+\b',
-    "hostname": r'\b[a-zA-Z0-9-]+\.(?:local|lan|home|internal|mesh|host|node)\b|\b[a-zA-Z0-9]+-[a-zA-Z0-9-]+\b|\blocalhost\b',
+    "domain": r"\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b",
+    "email": r"\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\b",
+    "file_path": r"(?<![\w.-])(?:/[\w.-]+)+\.\w+\b",
+    "version": r"\bv?\d+\.\d+(?:\.\d+)?(?:-[a-zA-Z0-9]+)?\b",
+    "ip_address": r"\b(?:\d{1,3}\.){3}\d{1,3}\b",
+    "docker_image": r"\b[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+(?::[a-zA-Z0-9_.-]+)?\b|\b[a-zA-Z0-9_.-]+:[a-zA-Z0-9_.-]+\b",
+    "hostname": r"\b[a-zA-Z0-9-]+\.(?:local|lan|home|internal|mesh|host|node)\b|\b[a-zA-Z0-9]+-[a-zA-Z0-9-]+\b|\blocalhost\b",
 }
 
 
@@ -48,7 +48,9 @@ class EntityExtractor:
                 start, end = match.span()
 
                 # Skip if this match is contained within any URL span
-                if any(start >= u_start and end <= u_end for u_start, u_end in url_spans):
+                if any(
+                    start >= u_start and end <= u_end for u_start, u_end in url_spans
+                ):
                     continue
 
                 if val not in seen:

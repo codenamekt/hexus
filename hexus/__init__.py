@@ -52,7 +52,9 @@ try:
     from agent.memory_provider import MemoryProvider
     from tools.registry import tool_error
     from hermes_cli.config import cfg_get
-except ImportError:  # pragma: no cover - standalone smoke tests do not install hermes-agent
+except (
+    ImportError
+):  # pragma: no cover - standalone smoke tests do not install hermes-agent
     MemoryProvider = None  # type: ignore[assignment]
     tool_error = None  # type: ignore[assignment]
     cfg_get = None  # type: ignore[assignment]
@@ -81,7 +83,6 @@ logger = logging.getLogger(__name__)
 
 if os.environ.get("HEXUS_DEBUG", "").lower() in ("1", "true", "yes", "on"):
     logger.setLevel(logging.DEBUG)
-
 
 
 # ---------------------------------------------------------------------------
@@ -174,7 +175,6 @@ RECALL_MEMORY_SCHEMA = {
         "required": ["query"],
     },
 }
-
 
 
 RECALL_DELEGATION_SCHEMA = {
@@ -381,8 +381,6 @@ MEMORY_STATS_SCHEMA = {
 }
 
 
-
-
 # ---------------------------------------------------------------------------
 # Config
 
@@ -428,19 +426,22 @@ DEFAULTS = {
 }
 
 
-
 def _load_plugin_config() -> dict:
     try:
         from hermes_constants import get_hermes_home
+
         config_path = get_hermes_home() / "config.yaml"
         if not config_path.exists():
             return {}
         import yaml
+
         with open(config_path, encoding="utf-8-sig") as fh:
             data = yaml.safe_load(fh) or {}
         if cfg_get is None:
             return {}
-        expanded = _expand_config_vars(cfg_get(data, "plugins", "hexus", default={}) or {})
+        expanded = _expand_config_vars(
+            cfg_get(data, "plugins", "hexus", default={}) or {}
+        )
         return expanded if isinstance(expanded, dict) else {}
     except Exception:  # noqa: BLE001
         return {}
@@ -490,6 +491,7 @@ def _expand_env_match(match: re.Match[str]) -> str:
 # Provider
 # ---------------------------------------------------------------------------
 
+
 class HexusMemoryProvider(MemoryProvider or object):
     """Postgres mirror of built-in memory entries, with semantic recall."""
 
@@ -519,6 +521,7 @@ class HexusMemoryProvider(MemoryProvider or object):
     def is_available(self) -> bool:
         try:
             import psycopg  # noqa: F401
+
             return True
         except ImportError:
             return False
@@ -602,9 +605,12 @@ class HexusMemoryProvider(MemoryProvider or object):
         # v0.4.0 — optionally warm the local embedder now so the cold
         # start lands on a known thread with a visible log line, rather
         # than on the first user-facing embed call. Default False.
-        if self._config.get("embed_eager_load", False) and not self._config.get("embed_url"):
+        if self._config.get("embed_eager_load", False) and not self._config.get(
+            "embed_url"
+        ):
             try:
                 from .embedder import get_default_embedder, DEFAULT_MODEL
+
                 get_default_embedder(
                     model_name=self._config.get("embed_model") or DEFAULT_MODEL
                 ).ensure_loaded()
@@ -620,6 +626,7 @@ class HexusMemoryProvider(MemoryProvider or object):
         # Dispatch session_new webhook event
         if self._config.get("webhook_url"):
             from .webhook.dispatcher import dispatch_webhook
+
             dispatch_webhook(
                 url=self._config.get("webhook_url"),
                 secret=self._config.get("webhook_secret"),
@@ -627,7 +634,7 @@ class HexusMemoryProvider(MemoryProvider or object):
                 payload={
                     "session_id": self._session_id,
                     "agent_identity": self._agent_identity,
-                }
+                },
             )
 
     def shutdown(self) -> None:
@@ -661,6 +668,7 @@ class HexusMemoryProvider(MemoryProvider or object):
         if not self._hermes_home:
             try:
                 from hermes_constants import get_hermes_home
+
                 self._hermes_home = str(get_hermes_home())
             except Exception:
                 return
@@ -672,47 +680,63 @@ class HexusMemoryProvider(MemoryProvider or object):
             if fpath.exists():
                 try:
                     mtime = os.path.getmtime(fpath)
-                    if fname not in self._last_md_mtimes or mtime > self._last_md_mtimes[fname]:
+                    if (
+                        fname not in self._last_md_mtimes
+                        or mtime > self._last_md_mtimes[fname]
+                    ):
                         changed = True
                         self._last_md_mtimes[fname] = mtime
                 except Exception as exc:
                     logger.debug("hexus failed to get mtime for %s: %s", fname, exc)
 
         if changed:
-            logger.info("hexus: detected local changes in memory markdown files, starting sync")
+            logger.info(
+                "hexus: detected local changes in memory markdown files, starting sync"
+            )
             self._bulk_sync_from_disk(self._hermes_home)
 
     def _sync_skills_from_disk(self) -> None:
         if not self._store or not self._hermes_home:
-            logger.debug("hexus: skills sync skipped. store_exists=%s, hermes_home=%s", self._store is not None, self._hermes_home)
+            logger.debug(
+                "hexus: skills sync skipped. store_exists=%s, hermes_home=%s",
+                self._store is not None,
+                self._hermes_home,
+            )
             return
-        
+
         skills_dir = Path(self._hermes_home) / "skills"
         logger.debug("hexus: scanning skills directory: %s", skills_dir)
         if not skills_dir.exists():
             logger.debug("hexus: skills directory does not exist: %s", skills_dir)
             return
-            
+
         for skill_file in skills_dir.rglob("SKILL.md"):
             try:
                 mtime = os.path.getmtime(skill_file)
                 rel_path = str(skill_file.relative_to(skills_dir))
-                
+
                 # Check if we already processed this mtime
-                if rel_path in self._last_md_mtimes and mtime <= self._last_md_mtimes[rel_path]:
-                    logger.debug("hexus: skill '%s' unmodified (mtime: %f), skipping sync", rel_path, mtime)
+                if (
+                    rel_path in self._last_md_mtimes
+                    and mtime <= self._last_md_mtimes[rel_path]
+                ):
+                    logger.debug(
+                        "hexus: skill '%s' unmodified (mtime: %f), skipping sync",
+                        rel_path,
+                        mtime,
+                    )
                     continue
-                
+
                 # Parse skill_file
                 content = skill_file.read_text(encoding="utf-8")
                 if not content.strip():
                     logger.debug("hexus: skill '%s' content is empty", rel_path)
                     continue
-                
+
                 # Extract skill name from folder name
                 skill_name = skill_file.parent.name
                 logger.debug("hexus: syncing skill '%s' (mtime: %f)", skill_name, mtime)
-                
+
                 # Add to DB
                 vec = self._maybe_embed(content)
                 self._store.add(
@@ -723,12 +747,12 @@ class HexusMemoryProvider(MemoryProvider or object):
                     metadata={
                         "source": "skill_sync",
                         "skill_name": skill_name,
-                        "file_path": str(skill_file)
+                        "file_path": str(skill_file),
                     },
                     compressed=None,
-                    content_hash=hashlib.sha256(content.encode("utf-8")).digest()
+                    content_hash=hashlib.sha256(content.encode("utf-8")).digest(),
                 )
-                
+
                 self._last_md_mtimes[rel_path] = mtime
                 logger.info("hexus: synced skill '%s' from disk", skill_name)
             except Exception as exc:
@@ -910,6 +934,7 @@ class HexusMemoryProvider(MemoryProvider or object):
                 )
                 if self._config.get("webhook_url"):
                     from .webhook.dispatcher import dispatch_webhook
+
                     dispatch_webhook(
                         url=self._config.get("webhook_url"),
                         secret=self._config.get("webhook_secret"),
@@ -919,7 +944,7 @@ class HexusMemoryProvider(MemoryProvider or object):
                             "target": item.target,
                             "content": item.content,
                             "metadata": item.metadata,
-                        }
+                        },
                     )
             elif item.action == "replace":
                 compressed = self._content_router.maybe_compress(item.content)
@@ -963,6 +988,7 @@ class HexusMemoryProvider(MemoryProvider or object):
                     )
                 if self._config.get("webhook_url"):
                     from .webhook.dispatcher import dispatch_webhook
+
                     dispatch_webhook(
                         url=self._config.get("webhook_url"),
                         secret=self._config.get("webhook_secret"),
@@ -972,7 +998,7 @@ class HexusMemoryProvider(MemoryProvider or object):
                             "target": item.target,
                             "content": item.content,
                             "metadata": item.metadata,
-                        }
+                        },
                     )
             elif item.action == "remove":
                 self._store.remove(
@@ -982,6 +1008,7 @@ class HexusMemoryProvider(MemoryProvider or object):
                 )
                 if self._config.get("webhook_url"):
                     from .webhook.dispatcher import dispatch_webhook
+
                     dispatch_webhook(
                         url=self._config.get("webhook_url"),
                         secret=self._config.get("webhook_secret"),
@@ -990,7 +1017,7 @@ class HexusMemoryProvider(MemoryProvider or object):
                             "agent_identity": item.agent_identity,
                             "target": item.target,
                             "content": item.content,
-                        }
+                        },
                     )
             elif item.action == "turn":
                 role = item.extra.get("role") or "user"
@@ -1007,7 +1034,9 @@ class HexusMemoryProvider(MemoryProvider or object):
             elif item.action == "delegation":
                 parent_sid = item.metadata.get("parent_session_id") or "default"
                 child_sid = item.extra.get("child_session_id") or "default"
-                combined_text = f"Task: {item.content}\nResult: {item.extra.get('result', '')}"
+                combined_text = (
+                    f"Task: {item.content}\nResult: {item.extra.get('result', '')}"
+                )
                 vec = self._maybe_embed(combined_text)
                 self._store.record_delegation(
                     parent_session_id=parent_sid,
@@ -1032,7 +1061,9 @@ class HexusMemoryProvider(MemoryProvider or object):
                             "source": "session_summarizer",
                         },
                         compressed=None,
-                        content_hash=hashlib.sha256(summary_text.encode("utf-8")).digest(),
+                        content_hash=hashlib.sha256(
+                            summary_text.encode("utf-8")
+                        ).digest(),
                     )
         except Exception as exc:  # noqa: BLE001
             logger.debug(
@@ -1045,11 +1076,12 @@ class HexusMemoryProvider(MemoryProvider or object):
 
     def _generate_session_summary(self, messages_json: str) -> Optional[str]:
         import urllib.request
+
         try:
             messages = json.loads(messages_json)
             if not messages:
                 return None
-            
+
             # Format history
             history = []
             for m in messages:
@@ -1057,20 +1089,24 @@ class HexusMemoryProvider(MemoryProvider or object):
                 content = m.get("content", "")
                 if content:
                     history.append(f"{role.upper()}: {content}")
-            
+
             if not history:
                 return None
-                
+
             history_str = "\n".join(history)
-            
+
             api_base = os.environ.get("LLM_API_BASE") or "http://headroom:8787/v1"
             # Try to get LITELLM_MASTER_KEY or HEADROOM_INTERNAL_TOKEN
-            api_key = os.environ.get("HEADROOM_INTERNAL_TOKEN") or os.environ.get("LITELLM_MASTER_KEY")
-            
+            api_key = os.environ.get("HEADROOM_INTERNAL_TOKEN") or os.environ.get(
+                "LITELLM_MASTER_KEY"
+            )
+
             url = f"{api_base.rstrip('/')}/chat/completions"
             summary_model = os.environ.get("HEXUS_SUMMARY_MODEL")
             if not summary_model:
-                raise ValueError("HEXUS_SUMMARY_MODEL environment variable is not configured.")
+                raise ValueError(
+                    "HEXUS_SUMMARY_MODEL environment variable is not configured."
+                )
             payload = {
                 "model": summary_model,
                 "messages": [
@@ -1081,34 +1117,36 @@ class HexusMemoryProvider(MemoryProvider or object):
                             "Write a highly concise, 1-2 sentence summary of the key outcomes, "
                             "user preferences, and facts learned during this session. "
                             "Do not include boilerplate like 'In this session...' or 'The user...'"
-                        )
+                        ),
                     },
-                    {
-                        "role": "user",
-                        "content": f"Transcript:\n{history_str}"
-                    }
+                    {"role": "user", "content": f"Transcript:\n{history_str}"},
                 ],
                 "temperature": 0.3,
-                "max_tokens": 150
+                "max_tokens": 150,
             }
-            
+
             logger.debug(
                 "hexus: generating session summary. url=%s, model=%s, api_key_configured=%s, history_turns=%d",
-                url, summary_model, api_key is not None, len(history)
+                url,
+                summary_model,
+                api_key is not None,
+                len(history),
             )
-            
+
             req = urllib.request.Request(
-                url, 
+                url,
                 data=json.dumps(payload).encode("utf-8"),
-                headers={"Content-Type": "application/json"}
+                headers={"Content-Type": "application/json"},
             )
             if api_key:
                 req.add_header("Authorization", f"Bearer {api_key}")
-                
+
             with urllib.request.urlopen(req, timeout=15) as resp:
                 resp_data = json.loads(resp.read().decode("utf-8"))
                 summary_content = resp_data["choices"][0]["message"]["content"].strip()
-                logger.debug("hexus: session summary successfully generated: %s", summary_content)
+                logger.debug(
+                    "hexus: session summary successfully generated: %s", summary_content
+                )
                 return summary_content
         except Exception as e:
             logger.debug("hexus failed to generate session summary via LLM: %s", e)
@@ -1185,6 +1223,7 @@ class HexusMemoryProvider(MemoryProvider or object):
         # Dispatch session_end webhook event
         if self._config.get("webhook_url"):
             from .webhook.dispatcher import dispatch_webhook
+
             dispatch_webhook(
                 url=self._config.get("webhook_url"),
                 secret=self._config.get("webhook_secret"),
@@ -1192,7 +1231,7 @@ class HexusMemoryProvider(MemoryProvider or object):
                 payload={
                     "session_id": self._session_id,
                     "agent_identity": self._agent_identity,
-                }
+                },
             )
 
     # -- Bulk sync (v0.1.1) --------------------------------------------------
@@ -1211,6 +1250,7 @@ class HexusMemoryProvider(MemoryProvider or object):
             # Fall back to hermes_constants if the runtime didn't pass it.
             try:
                 from hermes_constants import get_hermes_home
+
                 hermes_home = str(get_hermes_home())
             except Exception:  # noqa: BLE001
                 return
@@ -1247,8 +1287,10 @@ class HexusMemoryProvider(MemoryProvider or object):
             return None
         base_url = self._config["embed_url"]
         model = self._config["embed_model"]
+
         def _fn(text: str):
             return embed(text, base_url=base_url, model=model)
+
         return _fn
 
     # -- Tool surface --------------------------------------------------------
@@ -1267,7 +1309,6 @@ class HexusMemoryProvider(MemoryProvider or object):
             HEADROOM_RETRIEVE_SCHEMA,
             MEMORY_STATS_SCHEMA,
         ]
-
 
     def handle_tool_call(self, tool_name: str, args: Dict[str, Any], **kwargs) -> str:
         if tool_name == "recall_conversation":
@@ -1293,7 +1334,6 @@ class HexusMemoryProvider(MemoryProvider or object):
         if tool_name != "recall_memory":
             return tool_error(f"Unknown tool: {tool_name}")
 
-
         if not self._healthy or not self._store:
             return json.dumps({"results": [], "count": 0, "error": "hexus unavailable"})
 
@@ -1308,7 +1348,9 @@ class HexusMemoryProvider(MemoryProvider or object):
 
         # Scope resolution: 'current' → my agent_identity; 'all' → no filter;
         # anything else → treat as explicit theme name.
-        scope = (args.get("scope") or self._config.get("scope_default") or "current").strip()
+        scope = (
+            args.get("scope") or self._config.get("scope_default") or "current"
+        ).strip()
         if scope == "current":
             agent_filter: Optional[str] = self._agent_identity
         elif scope == "all":
@@ -1346,7 +1388,6 @@ class HexusMemoryProvider(MemoryProvider or object):
             )
         except Exception as exc:  # noqa: BLE001
             return json.dumps({"results": [], "count": 0, "error": f"db: {exc}"})
-
 
         results = []
         for r in rows:
@@ -1682,14 +1723,13 @@ class HexusMemoryProvider(MemoryProvider or object):
             return json.dumps({"error": "hexus unavailable"})
         try:
             from mcp_server.tools import memory_stats
+
             res = memory_stats(self._store, args)
             return json.dumps(res)
         except Exception as exc:
             return json.dumps({"error": f"stats check failed: {exc}"})
 
-
     # -- Setup hooks ---------------------------------------------------------
-
 
     def get_config_schema(self) -> List[Dict[str, Any]]:
         return [
@@ -1770,9 +1810,11 @@ class HexusMemoryProvider(MemoryProvider or object):
 
     def save_config(self, values: Dict[str, Any], hermes_home: str) -> None:
         from pathlib import Path
+
         config_path = Path(hermes_home) / "config.yaml"
         try:
             import yaml
+
             existing: Dict[str, Any] = {}
             if config_path.exists():
                 with open(config_path, encoding="utf-8-sig") as fh:
@@ -1805,6 +1847,7 @@ class HexusMemoryProvider(MemoryProvider or object):
 # ---------------------------------------------------------------------------
 # Plugin entry point
 # ---------------------------------------------------------------------------
+
 
 def register(ctx) -> None:
     """Register the hexus memory provider with the plugin system."""

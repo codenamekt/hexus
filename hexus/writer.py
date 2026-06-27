@@ -64,9 +64,13 @@ class AsyncWriter:
       - Call `shutdown(timeout=5)` on plugin teardown to drain gracefully.
     """
 
-    def __init__(self, worker_fn: Callable[[_PendingWrite], None], *, maxsize: int = 256):
+    def __init__(
+        self, worker_fn: Callable[[_PendingWrite], None], *, maxsize: int = 256
+    ):
         self._worker_fn = worker_fn
-        self._queue: "queue.Queue[Optional[_PendingWrite]]" = queue.Queue(maxsize=maxsize)
+        self._queue: "queue.Queue[Optional[_PendingWrite]]" = queue.Queue(
+            maxsize=maxsize
+        )
         self._thread: Optional[threading.Thread] = None
         self._stop = threading.Event()
         self._dropped = 0
@@ -162,6 +166,7 @@ class AsyncWriter:
 
     def _run(self) -> None:
         import time
+
         while not self._stop.is_set():
             try:
                 item = self._queue.get(timeout=0.5)

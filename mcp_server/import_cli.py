@@ -11,7 +11,9 @@ from hexus.store import MemoryStore
 from hexus.embed import embed
 
 
-def import_mem0(store: MemoryStore, file_path: str, agent_identity: str, target: str) -> None:
+def import_mem0(
+    store: MemoryStore, file_path: str, agent_identity: str, target: str
+) -> None:
     """Import memories from a Mem0 JSON file.
     Expected JSON format: a list of objects, each containing:
     - 'memory': the memory text content
@@ -52,7 +54,9 @@ def import_mem0(store: MemoryStore, file_path: str, agent_identity: str, target:
         try:
             vec = embed(content)
         except Exception as exc:
-            print(f"Warning: Failed to embed '{content[:40]}...': {exc}. Inserting without embedding.")
+            print(
+                f"Warning: Failed to embed '{content[:40]}...': {exc}. Inserting without embedding."
+            )
             vec = None
 
         try:
@@ -71,9 +75,14 @@ def import_mem0(store: MemoryStore, file_path: str, agent_identity: str, target:
             print(f"ERROR: Failed to insert item {idx}: {exc}", file=sys.stderr)
             errors += 1
 
-    print(f"Import complete: {success} inserted, {skipped} skipped/duplicates, {errors} errors.")
+    print(
+        f"Import complete: {success} inserted, {skipped} skipped/duplicates, {errors} errors."
+    )
 
-def import_honcho(store: MemoryStore, file_path: str, agent_identity: str, target: str) -> None:
+
+def import_honcho(
+    store: MemoryStore, file_path: str, agent_identity: str, target: str
+) -> None:
     """Import memories from a Honcho export.
     Expected JSON format: list of messages or documents.
     """
@@ -113,7 +122,9 @@ def import_honcho(store: MemoryStore, file_path: str, agent_identity: str, targe
         try:
             vec = embed(content)
         except Exception as exc:
-            print(f"Warning: Failed to embed '{content[:40]}...': {exc}. Inserting without embedding.")
+            print(
+                f"Warning: Failed to embed '{content[:40]}...': {exc}. Inserting without embedding."
+            )
             vec = None
 
         try:
@@ -132,9 +143,14 @@ def import_honcho(store: MemoryStore, file_path: str, agent_identity: str, targe
             print(f"ERROR: Failed to insert item {idx}: {exc}", file=sys.stderr)
             errors += 1
 
-    print(f"Import complete: {success} inserted, {skipped} skipped/duplicates, {errors} errors.")
+    print(
+        f"Import complete: {success} inserted, {skipped} skipped/duplicates, {errors} errors."
+    )
 
-def import_holographic(store: MemoryStore, file_path: str, agent_identity: str, target: str) -> None:
+
+def import_holographic(
+    store: MemoryStore, file_path: str, agent_identity: str, target: str
+) -> None:
     """Import memories from a Holographic JSON export."""
     # Similar structure to Mem0/Honcho
     if not os.path.exists(file_path):
@@ -173,7 +189,9 @@ def import_holographic(store: MemoryStore, file_path: str, agent_identity: str, 
         try:
             vec = embed(content)
         except Exception as exc:
-            print(f"Warning: Failed to embed '{content[:40]}...': {exc}. Inserting without embedding.")
+            print(
+                f"Warning: Failed to embed '{content[:40]}...': {exc}. Inserting without embedding."
+            )
             vec = None
 
         try:
@@ -192,9 +210,14 @@ def import_holographic(store: MemoryStore, file_path: str, agent_identity: str, 
             print(f"ERROR: Failed to insert item {idx}: {exc}", file=sys.stderr)
             errors += 1
 
-    print(f"Import complete: {success} inserted, {skipped} skipped/duplicates, {errors} errors.")
+    print(
+        f"Import complete: {success} inserted, {skipped} skipped/duplicates, {errors} errors."
+    )
 
-def import_markdown(store: MemoryStore, file_path: str, agent_identity: str, target: str) -> None:
+
+def import_markdown(
+    store: MemoryStore, file_path: str, agent_identity: str, target: str
+) -> None:
     """Import memories from a raw markdown file."""
     if not os.path.exists(file_path):
         print(f"ERROR: File not found: {file_path}", file=sys.stderr)
@@ -208,10 +231,13 @@ def import_markdown(store: MemoryStore, file_path: str, agent_identity: str, tar
             file_path=file_path,
             embed_fn=embed,
         )
-        print(f"Import complete: {res['inserted']} inserted, {res['skipped']} skipped/duplicates (parsed {res['parsed']} total).")
+        print(
+            f"Import complete: {res['inserted']} inserted, {res['skipped']} skipped/duplicates (parsed {res['parsed']} total)."
+        )
     except Exception as exc:
         print(f"ERROR: Bulk import failed: {exc}", file=sys.stderr)
         sys.exit(1)
+
 
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(
@@ -241,22 +267,38 @@ def main(argv: Optional[List[str]] = None) -> int:
     # mem0 subparser
     p_mem0 = sub.add_parser("mem0", help="Import from Mem0 JSON export.")
     p_mem0.add_argument("file", help="Path to Mem0 export JSON file.")
-    p_mem0.set_defaults(func=lambda store, args: import_mem0(store, args.file, args.agent_identity, args.target))
+    p_mem0.set_defaults(
+        func=lambda store, args: import_mem0(
+            store, args.file, args.agent_identity, args.target
+        )
+    )
 
     # honcho subparser
     p_honcho = sub.add_parser("honcho", help="Import from Honcho export JSON.")
     p_honcho.add_argument("file", help="Path to Honcho export JSON file.")
-    p_honcho.set_defaults(func=lambda store, args: import_honcho(store, args.file, args.agent_identity, args.target))
+    p_honcho.set_defaults(
+        func=lambda store, args: import_honcho(
+            store, args.file, args.agent_identity, args.target
+        )
+    )
 
     # holographic subparser
     p_holo = sub.add_parser("holographic", help="Import from Holographic JSON.")
     p_holo.add_argument("file", help="Path to Holographic export JSON file.")
-    p_holo.set_defaults(func=lambda store, args: import_holographic(store, args.file, args.agent_identity, args.target))
+    p_holo.set_defaults(
+        func=lambda store, args: import_holographic(
+            store, args.file, args.agent_identity, args.target
+        )
+    )
 
     # markdown subparser
     p_md = sub.add_parser("markdown", help="Import from raw MEMORY.md / USER.md files.")
     p_md.add_argument("file", help="Path to markdown file.")
-    p_md.set_defaults(func=lambda store, args: import_markdown(store, args.file, args.agent_identity, args.target))
+    p_md.set_defaults(
+        func=lambda store, args: import_markdown(
+            store, args.file, args.agent_identity, args.target
+        )
+    )
 
     args = parser.parse_args(argv)
 
@@ -270,6 +312,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     finally:
         store.close()
     return 0
+
 
 if __name__ == "__main__":
     sys.exit(main())

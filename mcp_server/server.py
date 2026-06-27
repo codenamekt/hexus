@@ -64,37 +64,51 @@ def _generate_metrics(store: MemoryStore) -> str:
     def clean_lbl(val: Any) -> str:
         if val is None:
             return "unknown"
-        return str(val).replace('\\', '\\\\').replace('"', '\\"')
+        return str(val).replace("\\", "\\\\").replace('"', '\\"')
 
     if db_data:
         # A. Memory entries count by agent and target
-        lines.append("# HELP hexus_memory_entries_count Number of memory entries by agent and target")
+        lines.append(
+            "# HELP hexus_memory_entries_count Number of memory entries by agent and target"
+        )
         lines.append("# TYPE hexus_memory_entries_count gauge")
         for row in db_data.get("memory_entries", []):
             agent = clean_lbl(row.get("agent_identity"))
             target = clean_lbl(row.get("target"))
             cnt = row.get("count", 0)
-            lines.append(f'hexus_memory_entries_count{{agent_identity="{agent}",target="{target}"}} {cnt}')
+            lines.append(
+                f'hexus_memory_entries_count{{agent_identity="{agent}",target="{target}"}} {cnt}'
+            )
 
         # B. Compressed memory entries count
-        lines.append("# HELP hexus_memory_entries_compressed_count Number of compressed memory entries by agent")
+        lines.append(
+            "# HELP hexus_memory_entries_compressed_count Number of compressed memory entries by agent"
+        )
         lines.append("# TYPE hexus_memory_entries_compressed_count gauge")
         for row in db_data.get("memory_entries_compressed", []):
             agent = clean_lbl(row.get("agent_identity"))
             cnt = row.get("count", 0)
-            lines.append(f'hexus_memory_entries_compressed_count{{agent_identity="{agent}"}} {cnt}')
+            lines.append(
+                f'hexus_memory_entries_compressed_count{{agent_identity="{agent}"}} {cnt}'
+            )
 
         # C. Conversation turns count by agent and role
-        lines.append("# HELP hexus_conversation_turns_count Number of conversation turns by agent and role")
+        lines.append(
+            "# HELP hexus_conversation_turns_count Number of conversation turns by agent and role"
+        )
         lines.append("# TYPE hexus_conversation_turns_count gauge")
         for row in db_data.get("conversations", []):
             agent = clean_lbl(row.get("agent_identity"))
             role = clean_lbl(row.get("role"))
             cnt = row.get("count", 0)
-            lines.append(f'hexus_conversation_turns_count{{agent_identity="{agent}",role="{role}"}} {cnt}')
+            lines.append(
+                f'hexus_conversation_turns_count{{agent_identity="{agent}",role="{role}"}} {cnt}'
+            )
 
         # D. Delegations count
-        lines.append("# HELP hexus_delegations_count Number of agent-of-agents delegations by agent")
+        lines.append(
+            "# HELP hexus_delegations_count Number of agent-of-agents delegations by agent"
+        )
         lines.append("# TYPE hexus_delegations_count gauge")
         for row in db_data.get("delegations", []):
             agent = clean_lbl(row.get("agent_identity"))
@@ -102,72 +116,108 @@ def _generate_metrics(store: MemoryStore) -> str:
             lines.append(f'hexus_delegations_count{{agent_identity="{agent}"}} {cnt}')
 
         # E. Feedback metrics for memory entries
-        lines.append("# HELP hexus_memory_recalls_total Total recall events on memory entries by agent")
+        lines.append(
+            "# HELP hexus_memory_recalls_total Total recall events on memory entries by agent"
+        )
         lines.append("# TYPE hexus_memory_recalls_total counter")
         for row in db_data.get("feedback", []):
             agent = clean_lbl(row.get("agent_identity"))
             recalls = row.get("total_recalls") or 0
-            lines.append(f'hexus_memory_recalls_total{{agent_identity="{agent}"}} {recalls}')
+            lines.append(
+                f'hexus_memory_recalls_total{{agent_identity="{agent}"}} {recalls}'
+            )
 
-        lines.append("# HELP hexus_memory_confirms_total Total memory confirm signals by agent")
+        lines.append(
+            "# HELP hexus_memory_confirms_total Total memory confirm signals by agent"
+        )
         lines.append("# TYPE hexus_memory_confirms_total counter")
         for row in db_data.get("feedback", []):
             agent = clean_lbl(row.get("agent_identity"))
             confirms = row.get("total_confirms") or 0
-            lines.append(f'hexus_memory_confirms_total{{agent_identity="{agent}"}} {confirms}')
+            lines.append(
+                f'hexus_memory_confirms_total{{agent_identity="{agent}"}} {confirms}'
+            )
 
-        lines.append("# HELP hexus_memory_rejects_total Total memory reject signals by agent")
+        lines.append(
+            "# HELP hexus_memory_rejects_total Total memory reject signals by agent"
+        )
         lines.append("# TYPE hexus_memory_rejects_total counter")
         for row in db_data.get("feedback", []):
             agent = clean_lbl(row.get("agent_identity"))
             rejects = row.get("total_rejects") or 0
-            lines.append(f'hexus_memory_rejects_total{{agent_identity="{agent}"}} {rejects}')
+            lines.append(
+                f'hexus_memory_rejects_total{{agent_identity="{agent}"}} {rejects}'
+            )
 
         # F. Conversation recalls
-        lines.append("# HELP hexus_conversation_recalls_total Total recall events on conversation turns by agent")
+        lines.append(
+            "# HELP hexus_conversation_recalls_total Total recall events on conversation turns by agent"
+        )
         lines.append("# TYPE hexus_conversation_recalls_total counter")
         for row in db_data.get("conversation_recalls", []):
             agent = clean_lbl(row.get("agent_identity"))
             recalls = row.get("total_recalls") or 0
-            lines.append(f'hexus_conversation_recalls_total{{agent_identity="{agent}"}} {recalls}')
+            lines.append(
+                f'hexus_conversation_recalls_total{{agent_identity="{agent}"}} {recalls}'
+            )
 
         # G. Delegation recalls
-        lines.append("# HELP hexus_delegation_recalls_total Total recall events on delegations by agent")
+        lines.append(
+            "# HELP hexus_delegation_recalls_total Total recall events on delegations by agent"
+        )
         lines.append("# TYPE hexus_delegation_recalls_total counter")
         for row in db_data.get("delegation_recalls", []):
             agent = clean_lbl(row.get("agent_identity"))
             recalls = row.get("total_recalls") or 0
-            lines.append(f'hexus_delegation_recalls_total{{agent_identity="{agent}"}} {recalls}')
+            lines.append(
+                f'hexus_delegation_recalls_total{{agent_identity="{agent}"}} {recalls}'
+            )
 
         # H. Memory entities
-        lines.append("# HELP hexus_memory_entities_unique Number of unique entities in memory entries by agent")
+        lines.append(
+            "# HELP hexus_memory_entities_unique Number of unique entities in memory entries by agent"
+        )
         lines.append("# TYPE hexus_memory_entities_unique gauge")
         for row in db_data.get("memory_entities", []):
             agent = clean_lbl(row.get("agent_identity"))
             uniq = row.get("unique_entities") or 0
-            lines.append(f'hexus_memory_entities_unique{{agent_identity="{agent}"}} {uniq}')
+            lines.append(
+                f'hexus_memory_entities_unique{{agent_identity="{agent}"}} {uniq}'
+            )
 
-        lines.append("# HELP hexus_memory_entities_total Total entity occurrences in memory entries by agent")
+        lines.append(
+            "# HELP hexus_memory_entities_total Total entity occurrences in memory entries by agent"
+        )
         lines.append("# TYPE hexus_memory_entities_total counter")
         for row in db_data.get("memory_entities", []):
             agent = clean_lbl(row.get("agent_identity"))
             tot = row.get("total_entity_occurrences") or 0
-            lines.append(f'hexus_memory_entities_total{{agent_identity="{agent}"}} {tot}')
+            lines.append(
+                f'hexus_memory_entities_total{{agent_identity="{agent}"}} {tot}'
+            )
 
         # I. Conversation entities
-        lines.append("# HELP hexus_conversation_entities_unique Number of unique entities in conversations by agent")
+        lines.append(
+            "# HELP hexus_conversation_entities_unique Number of unique entities in conversations by agent"
+        )
         lines.append("# TYPE hexus_conversation_entities_unique gauge")
         for row in db_data.get("conversation_entities", []):
             agent = clean_lbl(row.get("agent_identity"))
             uniq = row.get("unique_entities") or 0
-            lines.append(f'hexus_conversation_entities_unique{{agent_identity="{agent}"}} {uniq}')
+            lines.append(
+                f'hexus_conversation_entities_unique{{agent_identity="{agent}"}} {uniq}'
+            )
 
-        lines.append("# HELP hexus_conversation_entities_total Total entity occurrences in conversations by agent")
+        lines.append(
+            "# HELP hexus_conversation_entities_total Total entity occurrences in conversations by agent"
+        )
         lines.append("# TYPE hexus_conversation_entities_total counter")
         for row in db_data.get("conversation_entities", []):
             agent = clean_lbl(row.get("agent_identity"))
             tot = row.get("total_entity_occurrences") or 0
-            lines.append(f'hexus_conversation_entities_total{{agent_identity="{agent}"}} {tot}')
+            lines.append(
+                f'hexus_conversation_entities_total{{agent_identity="{agent}"}} {tot}'
+            )
 
     # 3. Async Writer Stats
     queue_stats = {}
@@ -179,24 +229,28 @@ def _generate_metrics(store: MemoryStore) -> str:
         lines.append(f"# ERROR: Failed to extract writer queue stats: {exc}")
 
     if queue_stats:
-        lines.extend([
-            "# HELP hexus_writer_queue_size Current size of the background write queue",
-            "# TYPE hexus_writer_queue_size gauge",
-            f"hexus_writer_queue_size {queue_stats.get('queue_size', 0)}",
-            "# HELP hexus_writer_queue_max Maximum capacity of the background write queue",
-            "# TYPE hexus_writer_queue_max gauge",
-            f"hexus_writer_queue_max {queue_stats.get('queue_max', 256)}",
-            "# HELP hexus_writer_dropped_total Total write tasks dropped due to full queue",
-            "# TYPE hexus_writer_dropped_total counter",
-            f"hexus_writer_dropped_total {queue_stats.get('dropped_total', 0)}",
-            "# HELP hexus_writer_thread_alive Whether the background drain thread is running (1=alive, 0=dead)",
-            "# TYPE hexus_writer_thread_alive gauge",
-            f"hexus_writer_thread_alive {1 if queue_stats.get('thread_alive') else 0}",
-        ])
+        lines.extend(
+            [
+                "# HELP hexus_writer_queue_size Current size of the background write queue",
+                "# TYPE hexus_writer_queue_size gauge",
+                f"hexus_writer_queue_size {queue_stats.get('queue_size', 0)}",
+                "# HELP hexus_writer_queue_max Maximum capacity of the background write queue",
+                "# TYPE hexus_writer_queue_max gauge",
+                f"hexus_writer_queue_max {queue_stats.get('queue_max', 256)}",
+                "# HELP hexus_writer_dropped_total Total write tasks dropped due to full queue",
+                "# TYPE hexus_writer_dropped_total counter",
+                f"hexus_writer_dropped_total {queue_stats.get('dropped_total', 0)}",
+                "# HELP hexus_writer_thread_alive Whether the background drain thread is running (1=alive, 0=dead)",
+                "# TYPE hexus_writer_thread_alive gauge",
+                f"hexus_writer_thread_alive {1 if queue_stats.get('thread_alive') else 0}",
+            ]
+        )
         p50 = queue_stats.get("p50_latency_sec")
         p95 = queue_stats.get("p95_latency_sec")
 
-        lines.append("# HELP hexus_writer_latency_seconds Estimated background write latency quantiles")
+        lines.append(
+            "# HELP hexus_writer_latency_seconds Estimated background write latency quantiles"
+        )
         lines.append("# TYPE hexus_writer_latency_seconds gauge")
         if p50 is not None and not math.isnan(p50):
             lines.append(f'hexus_writer_latency_seconds{{quantile="0.5"}} {p50}')
@@ -214,6 +268,7 @@ def _generate_metrics(store: MemoryStore) -> str:
 
     # Check if thread is alive
     import threading
+
     thread_alive = any(t.name == "hexus-cleanup-thread" for t in threading.enumerate())
 
     cleanup_metrics = getattr(store, "_cleanup_metrics", None) or {
@@ -224,30 +279,36 @@ def _generate_metrics(store: MemoryStore) -> str:
         "deleted_delegations": 0,
     }
 
-    lines.extend([
-        "# HELP hexus_cleanup_thread_alive Whether the background cleanup thread is running (1=alive, 0=dead)",
-        "# TYPE hexus_cleanup_thread_alive gauge",
-        f"hexus_cleanup_thread_alive {1 if thread_alive else 0}",
-        "# HELP hexus_cleanup_interval_hours Configured interval for background cleanup in hours",
-        "# TYPE hexus_cleanup_interval_hours gauge",
-        f"hexus_cleanup_interval_hours {cleanup_interval}",
-        "# HELP hexus_cleanup_runs_total Total number of completed background cleanup runs",
-        "# TYPE hexus_cleanup_runs_total counter",
-        f"hexus_cleanup_runs_total {cleanup_metrics['total_runs']}",
-        "# HELP hexus_cleanup_last_run_timestamp_seconds Epoch timestamp of the last cleanup run",
-        "# TYPE hexus_cleanup_last_run_timestamp_seconds gauge",
-        f"hexus_cleanup_last_run_timestamp_seconds {cleanup_metrics['last_run_timestamp']}",
-        "# HELP hexus_cleanup_deleted_records_total Total number of stale records deleted by the cleanup thread",
-        "# TYPE hexus_cleanup_deleted_records_total counter",
-        f"hexus_cleanup_deleted_records_total{{table=\"conversations\"}} {cleanup_metrics['deleted_conversations']}",
-        f"hexus_cleanup_deleted_records_total{{table=\"memory_entries\"}} {cleanup_metrics['deleted_memories']}",
-        f"hexus_cleanup_deleted_records_total{{table=\"delegations\"}} {cleanup_metrics['deleted_delegations']}",
-    ])
+    lines.extend(
+        [
+            "# HELP hexus_cleanup_thread_alive Whether the background cleanup thread is running (1=alive, 0=dead)",
+            "# TYPE hexus_cleanup_thread_alive gauge",
+            f"hexus_cleanup_thread_alive {1 if thread_alive else 0}",
+            "# HELP hexus_cleanup_interval_hours Configured interval for background cleanup in hours",
+            "# TYPE hexus_cleanup_interval_hours gauge",
+            f"hexus_cleanup_interval_hours {cleanup_interval}",
+            "# HELP hexus_cleanup_runs_total Total number of completed background cleanup runs",
+            "# TYPE hexus_cleanup_runs_total counter",
+            f"hexus_cleanup_runs_total {cleanup_metrics['total_runs']}",
+            "# HELP hexus_cleanup_last_run_timestamp_seconds Epoch timestamp of the last cleanup run",
+            "# TYPE hexus_cleanup_last_run_timestamp_seconds gauge",
+            f"hexus_cleanup_last_run_timestamp_seconds {cleanup_metrics['last_run_timestamp']}",
+            "# HELP hexus_cleanup_deleted_records_total Total number of stale records deleted by the cleanup thread",
+            "# TYPE hexus_cleanup_deleted_records_total counter",
+            f'hexus_cleanup_deleted_records_total{{table="conversations"}} {cleanup_metrics["deleted_conversations"]}',
+            f'hexus_cleanup_deleted_records_total{{table="memory_entries"}} {cleanup_metrics["deleted_memories"]}',
+            f'hexus_cleanup_deleted_records_total{{table="delegations"}} {cleanup_metrics["deleted_delegations"]}',
+        ]
+    )
 
     # 5. Background Consolidation Stats
-    consolidation_interval = int(os.environ.get("HEXUS_CONSOLIDATION_INTERVAL_HOURS", 12))
-    consolidation_thread_alive = any(t.name == "hexus-consolidation-thread" for t in threading.enumerate())
-    
+    consolidation_interval = int(
+        os.environ.get("HEXUS_CONSOLIDATION_INTERVAL_HOURS", 12)
+    )
+    consolidation_thread_alive = any(
+        t.name == "hexus-consolidation-thread" for t in threading.enumerate()
+    )
+
     consolidation_metrics = getattr(store, "_consolidation_metrics", None) or {
         "total_runs": 0,
         "last_run_timestamp": 0.0,
@@ -258,35 +319,37 @@ def _generate_metrics(store: MemoryStore) -> str:
         "cooccurring_replacements": 0,
     }
 
-    lines.extend([
-        "# HELP hexus_consolidation_thread_alive Whether the background consolidation thread is running (1=alive, 0=dead)",
-        "# TYPE hexus_consolidation_thread_alive gauge",
-        f"hexus_consolidation_thread_alive {1 if consolidation_thread_alive else 0}",
-        "# HELP hexus_consolidation_interval_hours Configured interval for background consolidation in hours",
-        "# TYPE hexus_consolidation_interval_hours gauge",
-        f"hexus_consolidation_interval_hours {consolidation_interval}",
-        "# HELP hexus_consolidation_runs_total Total number of completed background consolidation runs",
-        "# TYPE hexus_consolidation_runs_total counter",
-        f"hexus_consolidation_runs_total {consolidation_metrics['total_runs']}",
-        "# HELP hexus_consolidation_last_run_timestamp_seconds Epoch timestamp of the last consolidation run",
-        "# TYPE hexus_consolidation_last_run_timestamp_seconds gauge",
-        f"hexus_consolidation_last_run_timestamp_seconds {consolidation_metrics['last_run_timestamp']}",
-        "# HELP hexus_consolidation_low_confidence_processed_total Total low-confidence memories processed",
-        "# TYPE hexus_consolidation_low_confidence_processed_total counter",
-        f"hexus_consolidation_low_confidence_processed_total {consolidation_metrics['low_confidence_processed']}",
-        "# HELP hexus_consolidation_low_confidence_deletions_total Total low-confidence memories deleted",
-        "# TYPE hexus_consolidation_low_confidence_deletions_total counter",
-        f"hexus_consolidation_low_confidence_deletions_total {consolidation_metrics['low_confidence_deletions']}",
-        "# HELP hexus_consolidation_low_confidence_replacements_total Total low-confidence memories replaced",
-        "# TYPE hexus_consolidation_low_confidence_replacements_total counter",
-        f"hexus_consolidation_low_confidence_replacements_total {consolidation_metrics['low_confidence_replacements']}",
-        "# HELP hexus_consolidation_cooccurring_processed_topics_total Total cooccurring topics processed",
-        "# TYPE hexus_consolidation_cooccurring_processed_topics_total counter",
-        f"hexus_consolidation_cooccurring_processed_topics_total {consolidation_metrics['cooccurring_processed_topics']}",
-        "# HELP hexus_consolidation_cooccurring_replacements_total Total cooccurring memory entries replaced",
-        "# TYPE hexus_consolidation_cooccurring_replacements_total counter",
-        f"hexus_consolidation_cooccurring_replacements_total {consolidation_metrics['cooccurring_replacements']}",
-    ])
+    lines.extend(
+        [
+            "# HELP hexus_consolidation_thread_alive Whether the background consolidation thread is running (1=alive, 0=dead)",
+            "# TYPE hexus_consolidation_thread_alive gauge",
+            f"hexus_consolidation_thread_alive {1 if consolidation_thread_alive else 0}",
+            "# HELP hexus_consolidation_interval_hours Configured interval for background consolidation in hours",
+            "# TYPE hexus_consolidation_interval_hours gauge",
+            f"hexus_consolidation_interval_hours {consolidation_interval}",
+            "# HELP hexus_consolidation_runs_total Total number of completed background consolidation runs",
+            "# TYPE hexus_consolidation_runs_total counter",
+            f"hexus_consolidation_runs_total {consolidation_metrics['total_runs']}",
+            "# HELP hexus_consolidation_last_run_timestamp_seconds Epoch timestamp of the last consolidation run",
+            "# TYPE hexus_consolidation_last_run_timestamp_seconds gauge",
+            f"hexus_consolidation_last_run_timestamp_seconds {consolidation_metrics['last_run_timestamp']}",
+            "# HELP hexus_consolidation_low_confidence_processed_total Total low-confidence memories processed",
+            "# TYPE hexus_consolidation_low_confidence_processed_total counter",
+            f"hexus_consolidation_low_confidence_processed_total {consolidation_metrics['low_confidence_processed']}",
+            "# HELP hexus_consolidation_low_confidence_deletions_total Total low-confidence memories deleted",
+            "# TYPE hexus_consolidation_low_confidence_deletions_total counter",
+            f"hexus_consolidation_low_confidence_deletions_total {consolidation_metrics['low_confidence_deletions']}",
+            "# HELP hexus_consolidation_low_confidence_replacements_total Total low-confidence memories replaced",
+            "# TYPE hexus_consolidation_low_confidence_replacements_total counter",
+            f"hexus_consolidation_low_confidence_replacements_total {consolidation_metrics['low_confidence_replacements']}",
+            "# HELP hexus_consolidation_cooccurring_processed_topics_total Total cooccurring topics processed",
+            "# TYPE hexus_consolidation_cooccurring_processed_topics_total counter",
+            f"hexus_consolidation_cooccurring_processed_topics_total {consolidation_metrics['cooccurring_processed_topics']}",
+            "# HELP hexus_consolidation_cooccurring_replacements_total Total cooccurring memory entries replaced",
+            "# TYPE hexus_consolidation_cooccurring_replacements_total counter",
+            f"hexus_consolidation_cooccurring_replacements_total {consolidation_metrics['cooccurring_replacements']}",
+        ]
+    )
 
     return "\n".join(lines)
 
@@ -351,14 +414,19 @@ def _build_server(
     delegations_ttl = os.environ.get("HEXUS_CLEANUP_DELEGATIONS_TTL_DAYS")
     delegations_ttl = int(delegations_ttl) if delegations_ttl else None
 
-    if cleanup_interval > 0 and any(ttl is not None for ttl in (memories_ttl, conversations_ttl, delegations_ttl)):
+    if cleanup_interval > 0 and any(
+        ttl is not None for ttl in (memories_ttl, conversations_ttl, delegations_ttl)
+    ):
         import threading
         import time
 
         def background_cleanup_loop():
             logger.info(
                 "Background cleanup daemon thread started. Interval: %d hours. memories_ttl=%s, conversations_ttl=%s, delegations_ttl=%s",
-                cleanup_interval, memories_ttl, conversations_ttl, delegations_ttl
+                cleanup_interval,
+                memories_ttl,
+                conversations_ttl,
+                delegations_ttl,
             )
             while True:
                 time.sleep(cleanup_interval * 3600)
@@ -371,9 +439,15 @@ def _build_server(
                     )
                     store._cleanup_metrics["total_runs"] += 1
                     store._cleanup_metrics["last_run_timestamp"] = time.time()
-                    store._cleanup_metrics["deleted_conversations"] += deleted.get("conversations", 0)
-                    store._cleanup_metrics["deleted_memories"] += deleted.get("memory_entries", 0)
-                    store._cleanup_metrics["deleted_delegations"] += deleted.get("delegations", 0)
+                    store._cleanup_metrics["deleted_conversations"] += deleted.get(
+                        "conversations", 0
+                    )
+                    store._cleanup_metrics["deleted_memories"] += deleted.get(
+                        "memory_entries", 0
+                    )
+                    store._cleanup_metrics["deleted_delegations"] += deleted.get(
+                        "delegations", 0
+                    )
                     logger.info("Scheduled background cleanup finished: %s", deleted)
                 except Exception as exc:  # noqa: BLE001
                     logger.error("Error during scheduled background cleanup: %s", exc)
@@ -386,8 +460,10 @@ def _build_server(
         cleanup_thread.start()
 
     # -- Scheduled Background Consolidation --------------------------------
-    consolidation_interval = int(os.environ.get("HEXUS_CONSOLIDATION_INTERVAL_HOURS", 12))
-    
+    consolidation_interval = int(
+        os.environ.get("HEXUS_CONSOLIDATION_INTERVAL_HOURS", 12)
+    )
+
     if consolidation_interval > 0:
         import threading
         import time
@@ -396,14 +472,14 @@ def _build_server(
         def background_consolidation_loop():
             logger.info(
                 "Background consolidation daemon thread started. Interval: %d hours.",
-                consolidation_interval
+                consolidation_interval,
             )
             while True:
                 time.sleep(consolidation_interval * 3600)
-                
+
                 max_retries = 3
                 retry_delay = 60
-                
+
                 for attempt in range(1, max_retries + 1):
                     # Check if writer queue is empty
                     writer_empty = True
@@ -412,39 +488,70 @@ def _build_server(
                             writer_empty = False
                             break
                     if not writer_empty:
-                        logger.info("Async writer queue is not empty. Deferring consolidation.")
+                        logger.info(
+                            "Async writer queue is not empty. Deferring consolidation."
+                        )
                         time.sleep(retry_delay)
                         continue
 
                     if not os.environ.get("HEXUS_SUMMARY_MODEL"):
-                        logger.warning("HEXUS_SUMMARY_MODEL is not set. Skipping scheduled consolidation.")
+                        logger.warning(
+                            "HEXUS_SUMMARY_MODEL is not set. Skipping scheduled consolidation."
+                        )
                         break
 
                     try:
-                        logger.info("Running scheduled background database consolidation (attempt %d/%d)...", attempt, max_retries)
+                        logger.info(
+                            "Running scheduled background database consolidation (attempt %d/%d)...",
+                            attempt,
+                            max_retries,
+                        )
                         res_low = store.consolidate_low_confidence_memories()
                         res_co = store.consolidate_cooccurring_memories()
 
                         if res_low.get("status") == "error":
-                            raise RuntimeError(f"Low confidence consolidation failed: {res_low.get('reason')}")
+                            raise RuntimeError(
+                                f"Low confidence consolidation failed: {res_low.get('reason')}"
+                            )
 
                         # Update metrics
                         store._consolidation_metrics["total_runs"] += 1
                         store._consolidation_metrics["last_run_timestamp"] = time.time()
-                        
-                        store._consolidation_metrics["low_confidence_processed"] += res_low.get("processed", 0)
-                        store._consolidation_metrics["low_confidence_deletions"] += res_low.get("deletions", 0)
-                        store._consolidation_metrics["low_confidence_replacements"] += res_low.get("replacements", 0)
-                        
-                        store._consolidation_metrics["cooccurring_processed_topics"] += res_co.get("processed_topics", 0)
-                        store._consolidation_metrics["cooccurring_replacements"] += res_co.get("replacements", 0)
 
-                        logger.info("Scheduled background consolidation finished: low_confidence=%s, cooccurring=%s", res_low, res_co)
+                        store._consolidation_metrics["low_confidence_processed"] += (
+                            res_low.get("processed", 0)
+                        )
+                        store._consolidation_metrics["low_confidence_deletions"] += (
+                            res_low.get("deletions", 0)
+                        )
+                        store._consolidation_metrics["low_confidence_replacements"] += (
+                            res_low.get("replacements", 0)
+                        )
+
+                        store._consolidation_metrics[
+                            "cooccurring_processed_topics"
+                        ] += res_co.get("processed_topics", 0)
+                        store._consolidation_metrics["cooccurring_replacements"] += (
+                            res_co.get("replacements", 0)
+                        )
+
+                        logger.info(
+                            "Scheduled background consolidation finished: low_confidence=%s, cooccurring=%s",
+                            res_low,
+                            res_co,
+                        )
                         break  # Success
                     except Exception as exc:
-                        logger.error("Error during scheduled background consolidation (attempt %d/%d): %s", attempt, max_retries, exc)
+                        logger.error(
+                            "Error during scheduled background consolidation (attempt %d/%d): %s",
+                            attempt,
+                            max_retries,
+                            exc,
+                        )
                         if attempt < max_retries:
-                            logger.info("Retrying consolidation in %d seconds...", retry_delay)
+                            logger.info(
+                                "Retrying consolidation in %d seconds...", retry_delay
+                            )
                             time.sleep(retry_delay)
 
         consolidation_thread = threading.Thread(
@@ -543,7 +650,6 @@ def _build_server(
             },
         )
 
-
     @mcp.tool()
     def memory_hybrid_search(
         query: str,
@@ -590,7 +696,6 @@ def _build_server(
                 "recall_boost_weight": recall_boost_weight,
             },
         )
-
 
     @mcp.tool()
     def memory_search(
@@ -875,23 +980,34 @@ def _build_server(
         res_agent = agent_identity.strip() if agent_identity else None
         if not res_agent:
             res_agent = os.environ.get("HEXUS_AGENT_IDENTITY", "default")
-            
+
         res_low = store.consolidate_low_confidence_memories(agent_identity=res_agent)
         res_co = store.consolidate_cooccurring_memories(agent_identity=res_agent)
-        
+
         # Track manual run metrics
         store._consolidation_metrics["total_runs"] += 1
         import time
+
         store._consolidation_metrics["last_run_timestamp"] = time.time()
-        
+
         if res_low.get("status") == "ok":
-            store._consolidation_metrics["low_confidence_processed"] += res_low.get("processed", 0)
-            store._consolidation_metrics["low_confidence_deletions"] += res_low.get("deletions", 0)
-            store._consolidation_metrics["low_confidence_replacements"] += res_low.get("replacements", 0)
+            store._consolidation_metrics["low_confidence_processed"] += res_low.get(
+                "processed", 0
+            )
+            store._consolidation_metrics["low_confidence_deletions"] += res_low.get(
+                "deletions", 0
+            )
+            store._consolidation_metrics["low_confidence_replacements"] += res_low.get(
+                "replacements", 0
+            )
         if res_co.get("status") == "ok":
-            store._consolidation_metrics["cooccurring_processed_topics"] += res_co.get("processed_topics", 0)
-            store._consolidation_metrics["cooccurring_replacements"] += res_co.get("replacements", 0)
-            
+            store._consolidation_metrics["cooccurring_processed_topics"] += res_co.get(
+                "processed_topics", 0
+            )
+            store._consolidation_metrics["cooccurring_replacements"] += res_co.get(
+                "replacements", 0
+            )
+
         return {
             "status": "ok",
             "low_confidence": res_low,
@@ -1060,19 +1176,20 @@ def _build_server(
 
     # -- patch ASGI app for Prometheus /metrics endpoint -------------------
     _orig_get_asgi_app = mcp.streamable_http_app
+
     def get_asgi_app_with_metrics(*args, **kwargs):
         app = _orig_get_asgi_app(*args, **kwargs)
         from starlette.responses import Response
+
         async def metrics(request):
             return Response(_generate_metrics(store), media_type="text/plain")
+
         app.add_route("/metrics", metrics)
         return app
+
     mcp.streamable_http_app = get_asgi_app_with_metrics
 
     return mcp
-
-
-
 
 
 def build_server(

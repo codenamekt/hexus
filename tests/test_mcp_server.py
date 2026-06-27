@@ -313,7 +313,7 @@ def test_memory_hybrid_recall_turns_round_trip(store):
 def test_memory_delegation_round_trip(store):
     from mcp_server import tools
 
-    identity = agent_of(store) # noqa: SLF001
+    identity = agent_of(store)  # noqa: SLF001
     rec = tools.memory_record_delegation(
         store,
         {
@@ -515,7 +515,9 @@ def test_memory_forget_rejects_bad_id(store):
     with pytest.raises(ValueError, match="positive integer"):
         tools.memory_forget(store, {"id": -3, "agent_identity": "x", "confirm": True})
     with pytest.raises(ValueError, match="positive integer"):
-        tools.memory_forget(store, {"id": "abc", "agent_identity": "x", "confirm": True})
+        tools.memory_forget(
+            store, {"id": "abc", "agent_identity": "x", "confirm": True}
+        )
 
 
 def test_memory_append_turn_and_recall_turns(store):
@@ -658,11 +660,12 @@ class TestMcpWiring:
 
     def _server(self, store):
         from mcp_server.server import _build_server
+
         return _build_server(store, name="hexus-test")
 
     def _get_tool_cache(self, mcp):
         """FastMCP wraps a Server internally; tools are cached there.
-        
+
         FastMCP 1.x stores tools in different locations depending on version:
         - mcp._tool_manager._tools (newer)
         - mcp._server._tool_cache (older)
@@ -714,23 +717,22 @@ class TestMcpWiring:
             "memory_consolidate",
         }.issubset(names), f"missing tools: {names}"
 
-
     def test_every_tool_has_description_and_input_schema(self, store):
         mcp = self._server(store)
         cache = self._get_tool_cache(mcp)
         for name, tool in cache.items():
             assert tool.description, f"tool {name!r} has empty description"
             # FastMCP's Tool uses `parameters` for the input JSON schema
-            assert hasattr(tool, "parameters"), f"tool {name!r} has no parameters (input schema)"
+            assert hasattr(tool, "parameters"), (
+                f"tool {name!r} has no parameters (input schema)"
+            )
             params = tool.parameters
             assert params, f"tool {name!r} has empty parameters"
             # MCP-required keys
             assert params.get("type") == "object", (
                 f"tool {name!r} parameters.type is {params.get('type')!r}"
             )
-            assert "properties" in params, (
-                f"tool {name!r} parameters has no properties"
-            )
+            assert "properties" in params, f"tool {name!r} parameters has no properties"
 
     def test_memory_retain_schema_includes_contents(self, store):
         mcp = self._server(store)
@@ -751,7 +753,12 @@ class TestMcpWiring:
 
     def test_memory_recall_schema_includes_decay_parameters(self, store):
         mcp = self._server(store)
-        for tool_name in ["memory_recall", "memory_hybrid_search", "memory_recall_turns", "memory_hybrid_recall_turns"]:
+        for tool_name in [
+            "memory_recall",
+            "memory_hybrid_search",
+            "memory_recall_turns",
+            "memory_hybrid_recall_turns",
+        ]:
             tool = self._get_tool_cache(mcp)[tool_name]
             props = tool.parameters["properties"]
             assert "decay_half_life_days" in props
@@ -762,7 +769,7 @@ def test_mcp_graph_tools_round_trip(store):
     """Verify that we can call entity_graph, graph_walk, and common_topics via FastMCP handlers."""
     from mcp_server import tools
 
-    agent = agent_of(store) # noqa: SLF001
+    agent = agent_of(store)  # noqa: SLF001
 
     # Insert docs containing entities
     tools.memory_retain(
@@ -818,7 +825,7 @@ def test_mcp_confirm_reject_summarize_round_trip(store):
     """Verify that we can call memory_confirm, memory_reject, and memory_summarize_session via FastMCP handlers."""
     from mcp_server import tools
 
-    agent = agent_of(store) # noqa: SLF001
+    agent = agent_of(store)  # noqa: SLF001
 
     # Retain entry
     tools.memory_retain(
@@ -826,26 +833,25 @@ def test_mcp_confirm_reject_summarize_round_trip(store):
         {
             "contents": ["Some test memory details"],
             "agent_identity": agent,
-        }
+        },
     )
-    
+
     # Browse to get the ID
     search_res = tools.memory_search(
         store,
         {
             "agent_identity": agent,
-        }
+        },
     )
     assert search_res["count"] >= 1
     entry_id = search_res["rows"][0]["id"]
 
-    
     # 1. Call confirm
     confirm_res = tools.memory_confirm(
         store,
         {
             "id": entry_id,
-        }
+        },
     )
     assert confirm_res["id"] == entry_id
     assert confirm_res["success"] is True
@@ -855,7 +861,7 @@ def test_mcp_confirm_reject_summarize_round_trip(store):
         store,
         {
             "id": entry_id,
-        }
+        },
     )
     assert reject_res["id"] == entry_id
     assert reject_res["success"] is True
@@ -870,7 +876,7 @@ def test_mcp_confirm_reject_summarize_round_trip(store):
             "agent_identity": agent,
             "role": "user",
             "content": "MCP Turn 1",
-        }
+        },
     )
     tools.memory_append_turn(
         store,
@@ -879,7 +885,7 @@ def test_mcp_confirm_reject_summarize_round_trip(store):
             "agent_identity": agent,
             "role": "assistant",
             "content": "MCP Turn 2",
-        }
+        },
     )
 
     summary_res = tools.memory_summarize_session(
@@ -887,7 +893,7 @@ def test_mcp_confirm_reject_summarize_round_trip(store):
         {
             "session_id": session_id,
             "limit": 2,
-        }
+        },
     )
     assert summary_res["session_id"] == session_id
     assert summary_res["turn_count"] == 2
@@ -901,7 +907,9 @@ def test_mcp_retrieve_round_trip(store):
     agent = agent_of(store)
 
     # Long text that will get compressed
-    content_long = "This is a long content to test retrieval of the full memory entries."
+    content_long = (
+        "This is a long content to test retrieval of the full memory entries."
+    )
     compressed_text = "[Compressed] This is..."
 
     row_id = store.add(
@@ -909,14 +917,14 @@ def test_mcp_retrieve_round_trip(store):
         target="memory",
         content=content_long,
         compressed=compressed_text,
-        embedding=[0.1]*384,
+        embedding=[0.1] * 384,
     )
 
     res = tools.memory_retrieve(
         store,
         {
             "id": row_id,
-        }
+        },
     )
     assert res["id"] == row_id
     assert res["found"] is True
@@ -967,48 +975,67 @@ def test_mcp_recall_dynamic_decay(store):
     agent = agent_of(store)
 
     # Retain two identical memories
-    tools.memory_retain(store, {
-        "contents": ["Dynamic Decay Test Entry 1"],
-        "agent_identity": agent,
-        "target": "memory",
-    })
-    tools.memory_retain(store, {
-        "contents": ["Dynamic Decay Test Entry 2"],
-        "agent_identity": agent,
-        "target": "memory",
-    })
+    tools.memory_retain(
+        store,
+        {
+            "contents": ["Dynamic Decay Test Entry 1"],
+            "agent_identity": agent,
+            "target": "memory",
+        },
+    )
+    tools.memory_retain(
+        store,
+        {
+            "contents": ["Dynamic Decay Test Entry 2"],
+            "agent_identity": agent,
+            "target": "memory",
+        },
+    )
 
     # Retrieve their IDs from database to modify updated_at
     with store._get_pool().connection() as conn:
-        with conn.cursor(row_factory=dict_row) if hasattr(conn, "cursor") else conn.cursor() as cur:
-            cur.execute("SELECT id, content FROM memory_entries WHERE agent_identity = %s", (agent,))
+        with (
+            conn.cursor(row_factory=dict_row)
+            if hasattr(conn, "cursor")
+            else conn.cursor() as cur
+        ):
+            cur.execute(
+                "SELECT id, content FROM memory_entries WHERE agent_identity = %s",
+                (agent,),
+            )
             rows = list(cur.fetchall())
-            
+
             # Make sure we got two entries
             assert len(rows) == 2
-            
+
             # Set one to be 10 days ago
             cur.execute(
                 "UPDATE memory_entries SET updated_at = now() - interval '10 days' WHERE id = %s",
-                (rows[0]["id"],)
+                (rows[0]["id"],),
             )
             conn.commit()
 
     # Query with decay disabled (decay_half_life_days=0.0)
-    res_no_decay = tools.memory_recall(store, {
-        "query": "Dynamic Decay Test Entry",
-        "agent_identity": agent,
-        "decay_half_life_days": 0.0,
-        "top_k": 2,
-    })
-    
+    res_no_decay = tools.memory_recall(
+        store,
+        {
+            "query": "Dynamic Decay Test Entry",
+            "agent_identity": agent,
+            "decay_half_life_days": 0.0,
+            "top_k": 2,
+        },
+    )
+
     # Query with decay enabled (decay_half_life_days=2.0)
-    res_decay = tools.memory_recall(store, {
-        "query": "Dynamic Decay Test Entry",
-        "agent_identity": agent,
-        "decay_half_life_days": 2.0,
-        "top_k": 2,
-    })
+    res_decay = tools.memory_recall(
+        store,
+        {
+            "query": "Dynamic Decay Test Entry",
+            "agent_identity": agent,
+            "decay_half_life_days": 2.0,
+            "top_k": 2,
+        },
+    )
 
     # Under decay, the older entry (rows[0]) should have a lower score than the new entry (rows[1])
     no_decay_scores = {r["id"]: r["score"] for r in res_no_decay["results"]}
@@ -1051,7 +1078,7 @@ def test_mcp_consolidation_round_trip(store, monkeypatch):
 
     # 1. Setup mock environment
     monkeypatch.setenv("HEXUS_SUMMARY_MODEL", "mock-summary-model")
-    
+
     if not hasattr(store, "_consolidation_metrics"):
         store._consolidation_metrics = {
             "total_runs": 0,
@@ -1062,39 +1089,59 @@ def test_mcp_consolidation_round_trip(store, monkeypatch):
             "cooccurring_processed_topics": 0,
             "cooccurring_replacements": 0,
         }
-    
+
     # 2. Insert some low confidence memories (rejected count > 0, confirm count = 0)
     agent = "test-agent-consolidation"
-    
+
     with store._get_pool().connection() as conn:
         with conn.cursor() as cur:
-            cur.execute("DELETE FROM memory_entries WHERE agent_identity = %s", (agent,))
+            cur.execute(
+                "DELETE FROM memory_entries WHERE agent_identity = %s", (agent,)
+            )
             conn.commit()
 
     # Insert entry to delete
-    store.add(agent_identity=agent, target="memory", content="Obsolete content to be deleted")
+    store.add(
+        agent_identity=agent, target="memory", content="Obsolete content to be deleted"
+    )
     # Insert entries to replace/merge
-    store.add(agent_identity=agent, target="memory", content="First partial fact about python")
-    store.add(agent_identity=agent, target="memory", content="Second partial fact about python")
-    
+    store.add(
+        agent_identity=agent, target="memory", content="First partial fact about python"
+    )
+    store.add(
+        agent_identity=agent,
+        target="memory",
+        content="Second partial fact about python",
+    )
+
     # Get IDs of inserted entries
     with store._get_pool().connection() as conn:
-        with conn.cursor(row_factory=dict_row) if hasattr(conn, "cursor") else conn.cursor() as cur:
-            cur.execute("SELECT id, content FROM memory_entries WHERE agent_identity = %s", (agent,))
+        with (
+            conn.cursor(row_factory=dict_row)
+            if hasattr(conn, "cursor")
+            else conn.cursor() as cur
+        ):
+            cur.execute(
+                "SELECT id, content FROM memory_entries WHERE agent_identity = %s",
+                (agent,),
+            )
             rows = list(cur.fetchall())
-            
+
     assert len(rows) == 3
-    
+
     id_delete = next(r["id"] for r in rows if "Obsolete" in r["content"])
     id_rep1 = next(r["id"] for r in rows if "First" in r["content"])
     id_rep2 = next(r["id"] for r in rows if "Second" in r["content"])
-    
+
     # Update metadata to make them low confidence (reject_count = 1, confirm_count = 0)
     with store._get_pool().connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 "UPDATE memory_entries SET metadata = %s WHERE id = ANY(%s)",
-                (json.dumps({"reject_count": 1, "confirm_count": 0}), [id_delete, id_rep1, id_rep2])
+                (
+                    json.dumps({"reject_count": 1, "confirm_count": 0}),
+                    [id_delete, id_rep1, id_rep2],
+                ),
             )
             conn.commit()
 
@@ -1104,44 +1151,59 @@ def test_mcp_consolidation_round_trip(store, monkeypatch):
             {
                 "message": {
                     "role": "assistant",
-                    "content": json.dumps({
-                        "deletions": [id_delete],
-                        "replacements": [
-                            {"ids": [id_rep1, id_rep2], "content": "Python is a dynamic programming language.", "target": "memory"}
-                        ]
-                    })
+                    "content": json.dumps(
+                        {
+                            "deletions": [id_delete],
+                            "replacements": [
+                                {
+                                    "ids": [id_rep1, id_rep2],
+                                    "content": "Python is a dynamic programming language.",
+                                    "target": "memory",
+                                }
+                            ],
+                        }
+                    ),
                 }
             }
         ]
     }
-    
+
     class MockResponse:
         def read(self):
             return json.dumps(llm_resp_data).encode("utf-8")
+
         def __enter__(self):
             return self
+
         def __exit__(self, exc_type, exc_val, exc_tb):
             pass
 
     # Mock urllib.request.urlopen
     def mock_urlopen(req, *args, **kwargs):
         return MockResponse()
-        
+
     monkeypatch.setattr(urllib.request, "urlopen", mock_urlopen)
 
     # Run low-confidence consolidation
     res = store.consolidate_low_confidence_memories(agent_identity=agent)
-    
+
     assert res["status"] == "ok"
     assert res["deletions"] == 1
     assert res["replacements"] == 2
-    
+
     # Assert database is updated: id_delete, id_rep1, id_rep2 should be gone
     with store._get_pool().connection() as conn:
-        with conn.cursor(row_factory=dict_row) if hasattr(conn, "cursor") else conn.cursor() as cur:
-            cur.execute("SELECT id, content FROM memory_entries WHERE agent_identity = %s", (agent,))
+        with (
+            conn.cursor(row_factory=dict_row)
+            if hasattr(conn, "cursor")
+            else conn.cursor() as cur
+        ):
+            cur.execute(
+                "SELECT id, content FROM memory_entries WHERE agent_identity = %s",
+                (agent,),
+            )
             new_rows = list(cur.fetchall())
-            
+
     # Should have exactly 1 entry: the consolidated python text
     assert len(new_rows) == 1
     assert new_rows[0]["content"] == "Python is a dynamic programming language."
@@ -1155,16 +1217,28 @@ def test_mcp_consolidation_round_trip(store, monkeypatch):
                 "value_a": "docker",
                 "type_b": "tech",
                 "value_b": "postgres",
-                "strength": 3
+                "strength": 3,
             }
         ]
+
     monkeypatch.setattr(store, "common_topics", mock_common_topics)
 
     # Insert 3 entries with matching metadata
-    meta = {"entities": [{"type": "tech", "value": "docker"}, {"type": "tech", "value": "postgres"}]}
-    id1 = store.add(agent_identity=agent, target="memory", content="Docker fact 1", metadata=meta)
-    id2 = store.add(agent_identity=agent, target="memory", content="Docker fact 2", metadata=meta)
-    id3 = store.add(agent_identity=agent, target="memory", content="Docker fact 3", metadata=meta)
+    meta = {
+        "entities": [
+            {"type": "tech", "value": "docker"},
+            {"type": "tech", "value": "postgres"},
+        ]
+    }
+    id1 = store.add(
+        agent_identity=agent, target="memory", content="Docker fact 1", metadata=meta
+    )
+    id2 = store.add(
+        agent_identity=agent, target="memory", content="Docker fact 2", metadata=meta
+    )
+    id3 = store.add(
+        agent_identity=agent, target="memory", content="Docker fact 3", metadata=meta
+    )
 
     # Define mock response for co-occurring
     cooccurring_resp_data = {
@@ -1172,11 +1246,13 @@ def test_mcp_consolidation_round_trip(store, monkeypatch):
             {
                 "message": {
                     "role": "assistant",
-                    "content": json.dumps({
-                        "ids_to_replace": [id1, id2, id3],
-                        "consolidated_content": "Docker and Postgres are set up.",
-                        "target": "memory"
-                    })
+                    "content": json.dumps(
+                        {
+                            "ids_to_replace": [id1, id2, id3],
+                            "consolidated_content": "Docker and Postgres are set up.",
+                            "target": "memory",
+                        }
+                    ),
                 }
             }
         ]
@@ -1185,12 +1261,16 @@ def test_mcp_consolidation_round_trip(store, monkeypatch):
     class MockCoResponse:
         def read(self):
             return json.dumps(cooccurring_resp_data).encode("utf-8")
+
         def __enter__(self):
             return self
+
         def __exit__(self, exc_type, exc_val, exc_tb):
             pass
 
-    monkeypatch.setattr(urllib.request, "urlopen", lambda *args, **kwargs: MockCoResponse())
+    monkeypatch.setattr(
+        urllib.request, "urlopen", lambda *args, **kwargs: MockCoResponse()
+    )
 
     res_co = store.consolidate_cooccurring_memories(agent_identity=agent)
     assert res_co["status"] == "ok"
@@ -1199,14 +1279,28 @@ def test_mcp_consolidation_round_trip(store, monkeypatch):
 
     # Assert database is updated: the 3 Docker facts are gone and the consolidated one is added
     with store._get_pool().connection() as conn:
-        with conn.cursor(row_factory=dict_row) if hasattr(conn, "cursor") else conn.cursor() as cur:
-            cur.execute("SELECT id, content FROM memory_entries WHERE agent_identity = %s AND content LIKE 'Docker fact%%'", (agent,))
+        with (
+            conn.cursor(row_factory=dict_row)
+            if hasattr(conn, "cursor")
+            else conn.cursor() as cur
+        ):
+            cur.execute(
+                "SELECT id, content FROM memory_entries WHERE agent_identity = %s AND content LIKE 'Docker fact%%'",
+                (agent,),
+            )
             docker_rows = list(cur.fetchall())
     assert len(docker_rows) == 0
 
     with store._get_pool().connection() as conn:
-        with conn.cursor(row_factory=dict_row) if hasattr(conn, "cursor") else conn.cursor() as cur:
-            cur.execute("SELECT id, content FROM memory_entries WHERE agent_identity = %s AND content = 'Docker and Postgres are set up.'", (agent,))
+        with (
+            conn.cursor(row_factory=dict_row)
+            if hasattr(conn, "cursor")
+            else conn.cursor() as cur
+        ):
+            cur.execute(
+                "SELECT id, content FROM memory_entries WHERE agent_identity = %s AND content = 'Docker and Postgres are set up.'",
+                (agent,),
+            )
             consolidated_docker_rows = list(cur.fetchall())
     assert len(consolidated_docker_rows) == 1
 
@@ -1228,19 +1322,25 @@ def test_memory_consolidate_tool(store, monkeypatch):
             {
                 "message": {
                     "role": "assistant",
-                    "content": json.dumps({"deletions": [], "replacements": []})
+                    "content": json.dumps({"deletions": [], "replacements": []}),
                 }
             }
         ]
     }
+
     class MockResponse:
         def read(self):
             return json.dumps(dummy_resp).encode("utf-8")
+
         def __enter__(self):
             return self
+
         def __exit__(self, exc_type, exc_val, exc_tb):
             pass
-    monkeypatch.setattr(urllib.request, "urlopen", lambda *args, **kwargs: MockResponse())
+
+    monkeypatch.setattr(
+        urllib.request, "urlopen", lambda *args, **kwargs: MockResponse()
+    )
 
     # Get tool from tool cache
     if hasattr(mcp, "_tool_manager") and hasattr(mcp._tool_manager, "_tools"):
@@ -1254,14 +1354,10 @@ def test_memory_consolidate_tool(store, monkeypatch):
         raise AttributeError("Cannot find tool cache in FastMCP instance")
 
     assert "memory_consolidate" in tools_dict
-    
+
     # We can retrieve the underlying function and call it
     tool_func = tools_dict["memory_consolidate"].fn
     res = tool_func(agent_identity="test-agent")
     assert res["status"] == "ok"
     assert "low_confidence" in res
     assert "cooccurring" in res
-
-
-
-
