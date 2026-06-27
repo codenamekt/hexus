@@ -948,7 +948,7 @@ def test_mcp_server_cleanup_thread_startup(monkeypatch):
 
     dsn = os.environ.get("PG_TEST_DSN")
     if not dsn:
-        return  # Skip if no DSN available
+        pytest.skip("PG_TEST_DSN not set")
 
     # Build server (this should spawn the daemon thread)
     build_server(dsn, name="hexus-cleanup-test")
@@ -1035,7 +1035,7 @@ def test_mcp_server_consolidation_thread_startup(monkeypatch):
 
     dsn = os.environ.get("PG_TEST_DSN")
     if not dsn:
-        return  # Skip if no DSN available
+        pytest.skip("PG_TEST_DSN not set")
 
     build_server(dsn, name="hexus-consolidation-test")
 

@@ -12,12 +12,18 @@ class CCRCache:
 
     def get(self, memory_id: int) -> Optional[str]:
         with self._lock:
-            return self._cache.get(memory_id)
+            if memory_id in self._cache:
+                val = self._cache.pop(memory_id)
+                self._cache[memory_id] = val
+                return val
+            return None
 
     def set(self, memory_id: int, compressed: str) -> None:
         with self._lock:
-            if len(self._cache) >= self._maxsize:
-                # Evict first key
+            if memory_id in self._cache:
+                self._cache.pop(memory_id)
+            elif len(self._cache) >= self._maxsize:
+                # Evict first key (Least Recently Used)
                 first_key = next(iter(self._cache))
                 self._cache.pop(first_key, None)
             self._cache[memory_id] = compressed

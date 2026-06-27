@@ -35,8 +35,7 @@ logger = logging.getLogger(__name__)
 def _generate_metrics(store: MemoryStore) -> str:
     """Generate Prometheus metrics from DB and AsyncWriter status."""
     import math
-    import gc
-    from hexus.writer import AsyncWriter
+    from hexus.writer import _active_writers
 
     # 1. Base liveness and totals
     health = store.health()
@@ -173,10 +172,9 @@ def _generate_metrics(store: MemoryStore) -> str:
     # 3. Async Writer Stats
     queue_stats = {}
     try:
-        for obj in gc.get_objects():
-            if isinstance(obj, AsyncWriter):
-                queue_stats = obj.stats()
-                break
+        for obj in _active_writers:
+            queue_stats = obj.stats()
+            break
     except Exception as exc:
         lines.append(f"# ERROR: Failed to extract writer queue stats: {exc}")
 
@@ -393,8 +391,7 @@ def _build_server(
     if consolidation_interval > 0:
         import threading
         import time
-        import gc
-        from hexus.writer import AsyncWriter
+        from hexus.writer import _active_writers
 
         def background_consolidation_loop():
             logger.info(
@@ -410,11 +407,10 @@ def _build_server(
                 for attempt in range(1, max_retries + 1):
                     # Check if writer queue is empty
                     writer_empty = True
-                    for obj in gc.get_objects():
-                        if isinstance(obj, AsyncWriter):
-                            if obj._queue.qsize() > 0:
-                                writer_empty = False
-                                break
+                    for obj in _active_writers:
+                        if obj._queue.qsize() > 0:
+                            writer_empty = False
+                            break
                     if not writer_empty:
                         logger.info("Async writer queue is not empty. Deferring consolidation.")
                         time.sleep(retry_delay)
@@ -560,40 +556,40 @@ def _build_server(
         min_confidence: float = 0.0,
         decay_half_life_days: Optional[float] = None,
         recall_boost_weight: Optional[float] = None,
-     ) -> Dict[str, Any]:
-         """Hybrid search blending semantic vector search and full-text search over memory entries.
+    ) -> Dict[str, Any]:
+        """Hybrid search blending semantic vector search and full-text search over memory entries.
 
-         Args:
-           query: the natural-language search query.
-           top_k: 1..100, default 5.
-           vector_weight: weight for semantic similarity (0..1, default 0.7).
-           text_weight: weight for full-text search rank (0..1, default 0.3).
-           agent_identity: scope to one agent, or empty / None to search all.
-           target: 'memory' | 'user' | '' (both).
-           min_similarity: 0..1, default 0. Filter out lower-scored hits.
-           min_confidence: 0..1, default 0. Filter out entries with lower confidence ratio.
-           decay_half_life_days: optional decay half-life in days (0.0 to disable).
-           recall_boost_weight: optional recall boost weight parameter.
+        Args:
+          query: the natural-language search query.
+          top_k: 1..100, default 5.
+          vector_weight: weight for semantic similarity (0..1, default 0.7).
+          text_weight: weight for full-text search rank (0..1, default 0.3).
+          agent_identity: scope to one agent, or empty / None to search all.
+          target: 'memory' | 'user' | '' (both).
+          min_similarity: 0..1, default 0. Filter out lower-scored hits.
+          min_confidence: 0..1, default 0. Filter out entries with lower confidence ratio.
+          decay_half_life_days: optional decay half-life in days (0.0 to disable).
+          recall_boost_weight: optional recall boost weight parameter.
 
-         Returns: {"query", "count", "results": [{id, agent_identity, target,
-                                                   content, score, vector_score,
-                                                   text_score, metadata, ...}]}
-         """
-         return tools.memory_hybrid_search(
-             store,
-             {
-                 "query": query,
-                 "top_k": top_k,
-                 "vector_weight": vector_weight,
-                 "text_weight": text_weight,
-                 "agent_identity": agent_identity,
-                 "target": target,
-                 "min_similarity": min_similarity,
-                 "min_confidence": min_confidence,
-                 "decay_half_life_days": decay_half_life_days,
-                 "recall_boost_weight": recall_boost_weight,
-             },
-         )
+        Returns: {"query", "count", "results": [{id, agent_identity, target,
+                                                  content, score, vector_score,
+                                                  text_score, metadata, ...}]}
+        """
+        return tools.memory_hybrid_search(
+            store,
+            {
+                "query": query,
+                "top_k": top_k,
+                "vector_weight": vector_weight,
+                "text_weight": text_weight,
+                "agent_identity": agent_identity,
+                "target": target,
+                "min_similarity": min_similarity,
+                "min_confidence": min_confidence,
+                "decay_half_life_days": decay_half_life_days,
+                "recall_boost_weight": recall_boost_weight,
+            },
+        )
 
 
     @mcp.tool()

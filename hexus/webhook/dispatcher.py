@@ -62,6 +62,9 @@ def dispatch_webhook_sync(
                 )
         except requests.RequestException as exc:
             logger.warning("Webhook dispatch error for event %s on attempt %d: %s", event, attempt + 1, exc)
+        except Exception as exc:
+            logger.exception("Unexpected error in webhook dispatch thread for event %s: %s", event, exc)
+            return
         
         if attempt < max_retries:
             time.sleep(backoff)

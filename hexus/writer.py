@@ -24,8 +24,11 @@ import logging
 import queue
 import threading
 from typing import Any, Callable, Dict, Optional
+import weakref
 
 logger = logging.getLogger(__name__)
+
+_active_writers: weakref.WeakSet[AsyncWriter] = weakref.WeakSet()
 
 
 # Pending-write payload — kept small so the queue stays bounded.
@@ -70,6 +73,7 @@ class AsyncWriter:
         self._dropped_warned = False
         self._lock = threading.Lock()
         self._latencies: list[float] = []
+        _active_writers.add(self)
 
     # -- Public API ----------------------------------------------------------
 

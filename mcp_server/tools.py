@@ -731,7 +731,10 @@ def memory_recall_delegations(store: MemoryStore, args: Dict[str, Any]) -> Dict[
     if not isinstance(query, str) or not query.strip():
         raise ValueError("query must be a non-empty string")
 
-    top_k = int(args.get("top_k", 5))
+    try:
+        top_k = int(args.get("top_k", 5))
+    except (TypeError, ValueError):
+        raise ValueError("top_k must be an integer")
     top_k = max(1, min(top_k, 100))
 
     agent = args.get("agent_identity")
@@ -742,13 +745,22 @@ def memory_recall_delegations(store: MemoryStore, args: Dict[str, Any]) -> Dict[
     if isinstance(parent_session_id, str) and parent_session_id.strip() == "":
         parent_session_id = None
 
-    min_similarity = float(args.get("min_similarity", 0.0))
+    try:
+        min_similarity = float(args.get("min_similarity", 0.0))
+    except (TypeError, ValueError):
+        raise ValueError("min_similarity must be a float")
     min_similarity = max(0.0, min(min_similarity, 1.0))
 
-    decay_half_life_days = float(args.get("decay_half_life_days", 0.0))
+    try:
+        decay_half_life_days = float(args.get("decay_half_life_days", 0.0))
+    except (TypeError, ValueError):
+        raise ValueError("decay_half_life_days must be a float")
     decay_half_life_days = max(0.0, decay_half_life_days)
 
-    recall_boost_weight = float(args.get("recall_boost_weight", 0.0))
+    try:
+        recall_boost_weight = float(args.get("recall_boost_weight", 0.0))
+    except (TypeError, ValueError):
+        raise ValueError("recall_boost_weight must be a float")
     recall_boost_weight = max(0.0, recall_boost_weight)
 
     try:
@@ -917,12 +929,10 @@ def memory_stats(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
 
     # Try to get queue stats from any active AsyncWriter instances
     queue_stats = {}
-    import gc
-    from hexus.writer import AsyncWriter
-    for obj in gc.get_objects():
-        if isinstance(obj, AsyncWriter):
-            queue_stats = obj.stats()
-            break
+    from hexus.writer import _active_writers
+    for obj in _active_writers:
+        queue_stats = obj.stats()
+        break
 
     cleanup_stats = getattr(store, "_cleanup_metrics", None) or {
         "total_runs": 0,

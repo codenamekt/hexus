@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import logging
 import os
+os.environ.setdefault("USER", "agy")
 import threading
 from typing import List, Optional
 

@@ -6,5 +6,8 @@ ALTER TABLE memory_entries
   ADD COLUMN IF NOT EXISTS compressed TEXT,
   ADD COLUMN IF NOT EXISTS content_hash BYTEA;
 
-CREATE INDEX IF NOT EXISTS idx_memory_compressed_fts
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_memory_entries_content_hash
+  ON memory_entries(content_hash);
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_memory_compressed_fts
   ON memory_entries USING gin(to_tsvector('english', COALESCE(compressed, '')));

@@ -626,7 +626,7 @@ class MemoryStore:
                         [vec_literal] + params + [vec_literal, db_limit],
                     )
                     rows = list(cur.fetchall())
-                print(f"DEBUG_SEARCH_RAW: rows_len={len(rows)} data={[ {'id': r['id'], 'content': r['content'], 'score': r['score']} for r in rows ]}")
+                logger.debug("DEBUG_SEARCH_RAW: rows_len=%d data=%r", len(rows), [{'id': r['id'], 'content': r['content'], 'score': r['score']} for r in rows])
 
         # Apply boost & decay
         rows = self._apply_recall_boost(rows, recall_boost_weight)

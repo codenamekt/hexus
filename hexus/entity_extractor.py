@@ -8,8 +8,8 @@ DEFAULT_PATTERNS = {
     "file_path": r'(?<![\w.-])(?:/[\w.-]+)+\.\w+\b',
     "version": r'\bv?\d+\.\d+(?:\.\d+)?(?:-[a-zA-Z0-9]+)?\b',
     "ip_address": r'\b(?:\d{1,3}\.){3}\d{1,3}\b',
-    "docker_image": r'\b[a-zA-Z0-9][a-zA-Z0-9_.-]*(?::[a-zA-Z0-9_.-]+)?\b',
-    "hostname": r'\b[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\b',
+    "docker_image": r'\b[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+(?::[a-zA-Z0-9_.-]+)?\b|\b[a-zA-Z0-9_.-]+:[a-zA-Z0-9_.-]+\b',
+    "hostname": r'\b[a-zA-Z0-9-]+\.(?:local|lan|home|internal|mesh|host|node)\b|\b[a-zA-Z0-9]+-[a-zA-Z0-9-]+\b|\blocalhost\b',
 }
 
 
@@ -27,16 +27,17 @@ class EntityExtractor:
         seen = set()
 
         # Extract elements matching our patterns.
-        # Order matters slightly: evaluate urls first so we don't double-extract
-        # domains or file paths out of URLs.
-        # We can keep track of spans or simply exclude matches already contained in URLs.
-        url_matches = []
+        # Track spans to avoid extracting domains, hostnames, or other entities
+        # from within URLs, while still allowing them to be extracted if they
+        # appear elsewhere as standalone entities.
+        url_spans = []
         if "url" in self._compiled:
             for match in self._compiled["url"].finditer(text):
                 val = match.group(0)
+                start, end = match.span()
+                url_spans.append((start, end))
                 if val not in seen:
                     seen.add(val)
-                    url_matches.append(val)
                     extracted.append({"type": "url", "value": val})
 
         for entity_type, pattern in self._compiled.items():
@@ -44,10 +45,13 @@ class EntityExtractor:
                 continue
             for match in pattern.finditer(text):
                 val = match.group(0)
+                start, end = match.span()
+
+                # Skip if this match is contained within any URL span
+                if any(start >= u_start and end <= u_end for u_start, u_end in url_spans):
+                    continue
+
                 if val not in seen:
-                    # Avoid extracting parts of already matched URLs
-                    if any(val in url for url in url_matches):
-                        continue
                     seen.add(val)
                     extracted.append({"type": entity_type, "value": val})
 
