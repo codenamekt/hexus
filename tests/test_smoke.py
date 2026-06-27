@@ -595,19 +595,19 @@ def test_entity_tagging_and_graph(store):
     s.add(
         agent_identity=agent,
         target="memory",
-        content="Visit https://google.com/search on the file /var/log/nginx.log for postgres running in Traefik.",
+        content="Visit https://google.com/search on the file /var/log/nginx.log for postgres:alpine running in traefik:latest.",
         embedding=vec,
     )
     s.add(
         agent_identity=agent,
         target="memory",
-        content="Configure postgres connection parameters and check /var/log/nginx.log.",
+        content="Configure postgres:alpine connection parameters and check /var/log/nginx.log.",
         embedding=vec,
     )
     s.add(
         agent_identity=agent,
         target="memory",
-        content="Traefik reverse proxy maps to our website at https://google.com/search.",
+        content="traefik:latest reverse proxy maps to our website at https://google.com/search.",
         embedding=vec,
     )
 
