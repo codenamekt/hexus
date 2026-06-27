@@ -123,4 +123,4 @@ Looking for the nitty-gritty details? We moved the heavy technical stuff into th
 *   🔙 [Rollback Guide](docs/ROLLBACK.md) - In case you change your mind (but you won't!).
 
 ---
-*License: [BSD 3-Clause](LICENSE) © 2026 Hexus Contributors.*
+*License: [BSD 3-Clause](LICENSE)*
