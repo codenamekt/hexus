@@ -348,6 +348,135 @@ class MemoryStore:
                         "Failed to create/ensure quantization indexes: %s", exc
                     )
 
+    def _split_sql_statements(self, sql: str) -> list[str]:
+        """Split a SQL script into individual statements, ignoring semicolons
+        inside comments, single/double quotes, and dollar-quoted blocks.
+        """
+        statements = []
+        current_statement = []
+
+        in_single_comment = False
+        in_multi_comment = False
+        in_single_quote = False
+        in_double_quote = False
+        dollar_tag = None
+
+        i = 0
+        n = len(sql)
+        while i < n:
+            c = sql[i]
+            next_c = sql[i + 1] if i + 1 < n else ""
+            next_two = sql[i : i + 2]
+
+            if in_single_comment:
+                if c == "\n":
+                    in_single_comment = False
+                current_statement.append(c)
+                i += 1
+                continue
+
+            if in_multi_comment:
+                if next_two == "*/":
+                    in_multi_comment = False
+                    current_statement.append("*/")
+                    i += 2
+                else:
+                    current_statement.append(c)
+                    i += 1
+                continue
+
+            if in_single_quote:
+                if c == "'":
+                    if next_c == "'":
+                        current_statement.append("''")
+                        i += 2
+                    else:
+                        in_single_quote = False
+                        current_statement.append(c)
+                        i += 1
+                else:
+                    current_statement.append(c)
+                    i += 1
+                continue
+
+            if in_double_quote:
+                if c == '"':
+                    in_double_quote = False
+                current_statement.append(c)
+                i += 1
+                continue
+
+            if dollar_tag is not None:
+                tag_len = len(dollar_tag) + 2
+                close_tag = f"${dollar_tag}$"
+                if sql[i : i + tag_len] == close_tag:
+                    dollar_tag = None
+                    current_statement.append(close_tag)
+                    i += tag_len
+                else:
+                    current_statement.append(c)
+                    i += 1
+                continue
+
+            # Outside comments/strings/dollar-quotes
+            if next_two == "--":
+                in_single_comment = True
+                current_statement.append("--")
+                i += 2
+                continue
+
+            if next_two == "/*":
+                in_multi_comment = True
+                current_statement.append("/*")
+                i += 2
+                continue
+
+            if c == "'":
+                in_single_quote = True
+                current_statement.append(c)
+                i += 1
+                continue
+
+            if c == '"':
+                in_double_quote = True
+                current_statement.append(c)
+                i += 1
+                continue
+
+            if c == "$":
+                # Check for dollar-quoted string tag
+                match_dollar = False
+                for j in range(i + 1, n):
+                    if sql[j] == "$":
+                        tag_candidate = sql[i + 1 : j]
+                        if all(x.isalnum() or x == "_" for x in tag_candidate):
+                            dollar_tag = tag_candidate
+                            tag_len = j - i + 1
+                            current_statement.append(sql[i : j + 1])
+                            i += tag_len
+                            match_dollar = True
+                            break
+                        else:
+                            break
+                    elif not (sql[j].isalnum() or sql[j] == "_"):
+                        break
+                if match_dollar:
+                    continue
+
+            if c == ";":
+                statements.append("".join(current_statement))
+                current_statement = []
+                i += 1
+                continue
+
+            current_statement.append(c)
+            i += 1
+
+        if current_statement:
+            statements.append("".join(current_statement))
+
+        return [s for s in statements if s.strip()]
+
     def apply_migration_as_admin(self, *, admin_dsn: str) -> None:
         """One-shot admin path: run the full migrations with privileged creds."""
         migrations_dir = Path(__file__).parent / "migrations"
@@ -356,11 +485,7 @@ class MemoryStore:
             with conn.cursor() as cur:
                 for sql_file in sql_files:
                     sql = sql_file.read_text(encoding="utf-8")
-                    # Split SQL file into individual statements to allow CREATE INDEX CONCURRENTLY to run
-                    # outside of multi-statement transaction blocks in autocommit mode.
-                    statements = [
-                        stmt.strip() for stmt in sql.split(";") if stmt.strip()
-                    ]
+                    statements = self._split_sql_statements(sql)
                     for stmt in statements:
                         cur.execute(stmt)
 

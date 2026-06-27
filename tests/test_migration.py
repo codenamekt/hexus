@@ -77,6 +77,35 @@ def pg():
     return dsn
 
 
+def test_split_sql_statements():
+    """Verify that _split_sql_statements correctly handles semicolons inside comments, quotes, and dollar-quotes."""
+    from hexus.store import MemoryStore
+
+    store = MemoryStore("dbname=test")
+
+    sql = """
+    -- Comment with semicolon;
+    SELECT 1;
+    /* Multi-line comment;
+    with semicolon */
+    SELECT 'string; with semicolon';
+    SELECT "identifier; with semicolon";
+    SELECT $$dollar; quoted$$;
+    SELECT $tag$dollar; tag; quoted$tag$;
+    """
+
+    statements = store._split_sql_statements(sql)
+    assert len(statements) == 5
+    assert statements[0].strip() == "-- Comment with semicolon;\n    SELECT 1"
+    assert (
+        statements[1].strip()
+        == "/* Multi-line comment;\n    with semicolon */\n    SELECT 'string; with semicolon'"
+    )
+    assert statements[2].strip() == 'SELECT "identifier; with semicolon"'
+    assert statements[3].strip() == "SELECT $$dollar; quoted$$"
+    assert statements[4].strip() == "SELECT $tag$dollar; tag; quoted$tag$"
+
+
 def test_migration_file_exists():
     """Sanity: the .sql file is where we expect it. A missing migration
     is the most common reason these tests fail elsewhere."""
