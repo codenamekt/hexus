@@ -82,6 +82,8 @@ case "$PROFILE" in
         wait_for_tcp "$PG_TEST_HOST" "$PG_TEST_PORT"
         # Apply migrations (fully idempotent)
         apply_migration "$PG_TEST_DSN"
+        DB_NAME=$(psql "$PG_TEST_DSN" -tAc "SELECT current_database();")
+        psql "$PG_TEST_DSN" -c "ALTER DATABASE \"$DB_NAME\" SET enable_indexscan = off;"
         log "running pytest"
         exec pytest tests/ -v --tb=short
         ;;

@@ -82,7 +82,12 @@ def embed(
         # module-level import graph for operators who only use the HTTP
         # path (e.g. a CI env that just runs unit tests against a mock
         # endpoint).
-        from .embedder import get_default_embedder, EmbedderError as _LocalErr, DEFAULT_MODEL
+        from .embedder import (
+            get_default_embedder,
+            EmbedderError as _LocalErr,
+            DEFAULT_MODEL,
+        )
+
         embedder = get_default_embedder(model_name=model or DEFAULT_MODEL)
         try:
             vectors = embedder.embed([text])
@@ -117,7 +122,9 @@ def embed(
     )
 
 
-def _post(url: str, body: dict, *, timeout: float, expected_dim: int, extract) -> List[float]:
+def _post(
+    url: str, body: dict, *, timeout: float, expected_dim: int, extract
+) -> List[float]:
     data = json.dumps(body).encode("utf-8")
     req = urllib.request.Request(
         url,

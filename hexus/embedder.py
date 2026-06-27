@@ -29,6 +29,8 @@ from __future__ import annotations
 
 import logging
 import os
+
+os.environ.setdefault("USER", "agy")
 import threading
 from typing import List, Optional
 
@@ -157,7 +159,9 @@ class LocalBertEmbedder:
             # with a different dim is fine, the schema is dim-driven.
             logger.warning(
                 "embedder dim mismatch: model %s produced %d-dim, expected %d",
-                self._model_name, actual_dim, DEFAULT_DIM,
+                self._model_name,
+                actual_dim,
+                DEFAULT_DIM,
             )
         return vectors
 
@@ -188,6 +192,7 @@ class LocalBertEmbedder:
                 # out of the module-level import graph, so importing
                 # the plugin package stays fast.
                 from sentence_transformers import SentenceTransformer
+
                 kwargs = {"device": self._device}
                 if self._cache_dir:
                     kwargs["cache_folder"] = self._cache_dir
@@ -197,7 +202,9 @@ class LocalBertEmbedder:
                 self._model = SentenceTransformer(self._model_name, **kwargs)
                 logger.info(
                     "loaded local embedder model=%s dim=%d device=%s",
-                    self._model_name, self.dim, self._device,
+                    self._model_name,
+                    self.dim,
+                    self._device,
                 )
                 return self._model
             except Exception as exc:  # noqa: BLE001
@@ -240,7 +247,9 @@ def get_default_embedder(
         if existing is not None:
             return existing
         embedder = LocalBertEmbedder(
-            model_name=model_name, cache_dir=cache_dir, device=device,
+            model_name=model_name,
+            cache_dir=cache_dir,
+            device=device,
         )
         _singletons[key] = embedder
         return embedder

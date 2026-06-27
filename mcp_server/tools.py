@@ -22,6 +22,7 @@ Design contract:
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any, Dict, List, Optional
 
 from hexus.embed import EmbeddingError, embed
@@ -36,8 +37,6 @@ logger = logging.getLogger(__name__)
 # place that the MCP server "leaks" process-level identity into the
 # tool surface. The default can be overridden per-call.
 # -----------------------------------------------------------------------
-
-import os
 
 
 def default_agent_identity() -> str:
@@ -68,7 +67,6 @@ def memory_health(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
 
     try:
         store.ensure_schema()
-        schema_ok = True
     except Exception as exc:  # noqa: BLE001
         return {
             "status": "error",
@@ -76,15 +74,18 @@ def memory_health(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
             "embedder": {"model": DEFAULT_MODEL, "dim": DEFAULT_DIM},
         }
 
-    n_entries = store.count(agent_identity=None, target=None) if hasattr(store, "count") else None
+    n_entries = (
+        store.count(agent_identity=None, target=None)
+        if hasattr(store, "count")
+        else None
+    )
     return {
         "status": "ok",
         "schema_ok": True,
         "embedder": {
             "model": DEFAULT_MODEL,
             "dim": DEFAULT_DIM,
-            "eager_loaded": os.environ.get("HEXUS_EMBED_EAGER_LOAD", "0")
-            == "1",
+            "eager_loaded": os.environ.get("HEXUS_EMBED_EAGER_LOAD", "0") == "1",
         },
         "row_counts": {
             "memory_entries": n_entries,
@@ -102,7 +103,7 @@ def _coerce_agent_identity(args: Dict[str, Any]) -> str:
 
 def _coerce_target(args: Dict[str, Any]) -> Optional[str]:
     """target ∈ {'memory', 'user', None}. Anything else is rejected.
-    
+
     Empty string is treated as None to match MCP clients that send
     default values as '' rather than omitting the field.
     """
@@ -186,6 +187,21 @@ def memory_retain(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
                 duplicates += 1
             else:
                 inserted += 1
+                webhook_url = os.environ.get("HEXUS_WEBHOOK_URL")
+                if webhook_url:
+                    from hexus.webhook.dispatcher import dispatch_webhook
+
+                    dispatch_webhook(
+                        url=webhook_url,
+                        secret=os.environ.get("HEXUS_WEBHOOK_SECRET"),
+                        event="memory_retain",
+                        payload={
+                            "agent_identity": agent,
+                            "target": target,
+                            "content": content,
+                            "metadata": meta or {},
+                        },
+                    )
         except Exception as exc:  # noqa: BLE001
             errors.append(f"add failed for {content[:40]!r}: {exc}")
     return {"inserted": inserted, "duplicates": duplicates, "errors": errors}
@@ -224,6 +240,19 @@ def memory_recall(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
     if min_similarity > 1:
         min_similarity = 1.0
 
+    min_confidence = float(args.get("min_confidence", 0.0))
+    min_confidence = max(0.0, min(min_confidence, 1.0))
+
+    decay_val = args.get("decay_half_life_days")
+    if decay_val is None:
+        decay_val = os.environ.get("HEXUS_DECAY_HALF_LIFE_DAYS", 0.0)
+    decay_half_life_days = max(0.0, float(decay_val))
+
+    boost_val = args.get("recall_boost_weight")
+    if boost_val is None:
+        boost_val = os.environ.get("HEXUS_RECALL_BOOST_WEIGHT", 0.0)
+    recall_boost_weight = max(0.0, float(boost_val))
+
     try:
         vec = embed(query)
     except EmbeddingError as exc:
@@ -235,6 +264,9 @@ def memory_recall(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
         target=target,
         limit=top_k,
         min_similarity=min_similarity,
+        min_confidence=min_confidence,
+        decay_half_life_days=decay_half_life_days,
+        recall_boost_weight=recall_boost_weight,
     )
     return {
         "query": query,
@@ -298,11 +330,28 @@ def memory_forget(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
     with store._get_pool().connection() as conn:  # noqa: SLF001 — admin path
         with conn.cursor() as cur:
             cur.execute(
-                "DELETE FROM memory_entries WHERE id = %s AND agent_identity = %s RETURNING id",
+                "DELETE FROM memory_entries WHERE id = %s AND agent_identity = %s RETURNING id, target, content",
                 (entry_id, agent),
             )
             row = cur.fetchone()
             conn.commit()
+
+    if row:
+        webhook_url = os.environ.get("HEXUS_WEBHOOK_URL")
+        if webhook_url:
+            from hexus.webhook.dispatcher import dispatch_webhook
+
+            dispatch_webhook(
+                url=webhook_url,
+                secret=os.environ.get("HEXUS_WEBHOOK_SECRET"),
+                event="memory_forget",
+                payload={
+                    "agent_identity": agent,
+                    "target": row[1],
+                    "content": row[2],
+                },
+            )
+
     return {
         "deleted": 1 if row else 0,
         "dry_run": False,
@@ -339,6 +388,16 @@ def memory_recall_turns(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, A
         session_id = None
     min_similarity = float(args.get("min_similarity", 0.0))
 
+    decay_val = args.get("decay_half_life_days")
+    if decay_val is None:
+        decay_val = os.environ.get("HEXUS_DECAY_HALF_LIFE_DAYS", 0.0)
+    decay_half_life_days = max(0.0, float(decay_val))
+
+    boost_val = args.get("recall_boost_weight")
+    if boost_val is None:
+        boost_val = os.environ.get("HEXUS_RECALL_BOOST_WEIGHT", 0.0)
+    recall_boost_weight = max(0.0, float(boost_val))
+
     try:
         vec = embed(query)
     except EmbeddingError as exc:
@@ -350,6 +409,8 @@ def memory_recall_turns(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, A
         session_id=session_id,
         limit=top_k,
         min_similarity=min_similarity,
+        decay_half_life_days=decay_half_life_days,
+        recall_boost_weight=recall_boost_weight,
     )
     return {
         "query": query,
@@ -420,9 +481,7 @@ def memory_count(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
 
     return {
         "memory_entries": store.count(agent_identity=agent, target=target),
-        "conversations": store.count_turns(
-            agent_identity=agent, session_id=session_id
-        ),
+        "conversations": store.count_turns(agent_identity=agent, session_id=session_id),
         "agent_identity": agent,
         "target": target,
         "session_id": session_id,
@@ -492,6 +551,19 @@ def memory_hybrid_search(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, 
     min_similarity = float(args.get("min_similarity", 0.0))
     min_similarity = max(0.0, min(min_similarity, 1.0))
 
+    min_confidence = float(args.get("min_confidence", 0.0))
+    min_confidence = max(0.0, min(min_confidence, 1.0))
+
+    decay_val = args.get("decay_half_life_days")
+    if decay_val is None:
+        decay_val = os.environ.get("HEXUS_DECAY_HALF_LIFE_DAYS", 0.0)
+    decay_half_life_days = max(0.0, float(decay_val))
+
+    boost_val = args.get("recall_boost_weight")
+    if boost_val is None:
+        boost_val = os.environ.get("HEXUS_RECALL_BOOST_WEIGHT", 0.0)
+    recall_boost_weight = max(0.0, float(boost_val))
+
     try:
         vec = embed(query)
     except EmbeddingError as exc:
@@ -506,6 +578,9 @@ def memory_hybrid_search(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, 
         vector_weight=vector_weight,
         text_weight=text_weight,
         min_similarity=min_similarity,
+        min_confidence=min_confidence,
+        decay_half_life_days=decay_half_life_days,
+        recall_boost_weight=recall_boost_weight,
     )
     return {
         "query": query,
@@ -514,7 +589,9 @@ def memory_hybrid_search(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, 
     }
 
 
-def memory_hybrid_recall_turns(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
+def memory_hybrid_recall_turns(
+    store: MemoryStore, args: Dict[str, Any]
+) -> Dict[str, Any]:
     """Blend semantic vector search and full-text search over conversation turns.
 
     args:
@@ -549,6 +626,16 @@ def memory_hybrid_recall_turns(store: MemoryStore, args: Dict[str, Any]) -> Dict
     min_similarity = float(args.get("min_similarity", 0.0))
     min_similarity = max(0.0, min(min_similarity, 1.0))
 
+    decay_val = args.get("decay_half_life_days")
+    if decay_val is None:
+        decay_val = os.environ.get("HEXUS_DECAY_HALF_LIFE_DAYS", 0.0)
+    decay_half_life_days = max(0.0, float(decay_val))
+
+    boost_val = args.get("recall_boost_weight")
+    if boost_val is None:
+        boost_val = os.environ.get("HEXUS_RECALL_BOOST_WEIGHT", 0.0)
+    recall_boost_weight = max(0.0, float(boost_val))
+
     try:
         vec = embed(query)
     except EmbeddingError as exc:
@@ -563,6 +650,8 @@ def memory_hybrid_recall_turns(store: MemoryStore, args: Dict[str, Any]) -> Dict
         vector_weight=vector_weight,
         text_weight=text_weight,
         min_similarity=min_similarity,
+        decay_half_life_days=decay_half_life_days,
+        recall_boost_weight=recall_boost_weight,
     )
     return {
         "query": query,
@@ -571,7 +660,9 @@ def memory_hybrid_recall_turns(store: MemoryStore, args: Dict[str, Any]) -> Dict
     }
 
 
-def memory_record_delegation(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
+def memory_record_delegation(
+    store: MemoryStore, args: Dict[str, Any]
+) -> Dict[str, Any]:
     """Record a subagent delegation.
 
     args:
@@ -627,7 +718,9 @@ def memory_record_delegation(store: MemoryStore, args: Dict[str, Any]) -> Dict[s
     }
 
 
-def memory_recall_delegations(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
+def memory_recall_delegations(
+    store: MemoryStore, args: Dict[str, Any]
+) -> Dict[str, Any]:
     """Recall subagent delegations.
 
     args:
@@ -643,7 +736,10 @@ def memory_recall_delegations(store: MemoryStore, args: Dict[str, Any]) -> Dict[
     if not isinstance(query, str) or not query.strip():
         raise ValueError("query must be a non-empty string")
 
-    top_k = int(args.get("top_k", 5))
+    try:
+        top_k = int(args.get("top_k", 5))
+    except (TypeError, ValueError):
+        raise ValueError("top_k must be an integer")
     top_k = max(1, min(top_k, 100))
 
     agent = args.get("agent_identity")
@@ -654,13 +750,22 @@ def memory_recall_delegations(store: MemoryStore, args: Dict[str, Any]) -> Dict[
     if isinstance(parent_session_id, str) and parent_session_id.strip() == "":
         parent_session_id = None
 
-    min_similarity = float(args.get("min_similarity", 0.0))
+    try:
+        min_similarity = float(args.get("min_similarity", 0.0))
+    except (TypeError, ValueError):
+        raise ValueError("min_similarity must be a float")
     min_similarity = max(0.0, min(min_similarity, 1.0))
 
-    decay_half_life_days = float(args.get("decay_half_life_days", 0.0))
+    try:
+        decay_half_life_days = float(args.get("decay_half_life_days", 0.0))
+    except (TypeError, ValueError):
+        raise ValueError("decay_half_life_days must be a float")
     decay_half_life_days = max(0.0, decay_half_life_days)
 
-    recall_boost_weight = float(args.get("recall_boost_weight", 0.0))
+    try:
+        recall_boost_weight = float(args.get("recall_boost_weight", 0.0))
+    except (TypeError, ValueError):
+        raise ValueError("recall_boost_weight must be a float")
     recall_boost_weight = max(0.0, recall_boost_weight)
 
     try:
@@ -681,4 +786,194 @@ def memory_recall_delegations(store: MemoryStore, args: Dict[str, Any]) -> Dict[
         "query": query,
         "count": len(rows),
         "results": [_row_to_dict(r) for r in rows],
+    }
+
+
+def memory_entity_graph(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
+    """Find other entities that co-occur with a target entity."""
+    entity_type = args.get("entity_type")
+    if not isinstance(entity_type, str) or not entity_type.strip():
+        raise ValueError("entity_type must be a non-empty string")
+
+    entity_value = args.get("entity_value")
+    if not isinstance(entity_value, str) or not entity_value.strip():
+        raise ValueError("entity_value must be a non-empty string")
+
+    agent = args.get("agent_identity")
+    if isinstance(agent, str) and agent.strip() == "":
+        agent = None
+
+    limit = int(args.get("limit", 5))
+    limit = max(1, min(limit, 100))
+
+    return store.entity_graph(
+        entity_type=entity_type,
+        entity_value=entity_value,
+        agent_identity=agent,
+        limit=limit,
+    )
+
+
+def memory_graph_walk(store: MemoryStore, args: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Traverse the co-occurrence graph up to N hops away from a start entity."""
+    entity_type = args.get("entity_type")
+    if not isinstance(entity_type, str) or not entity_type.strip():
+        raise ValueError("entity_type must be a non-empty string")
+
+    entity_value = args.get("entity_value")
+    if not isinstance(entity_value, str) or not entity_value.strip():
+        raise ValueError("entity_value must be a non-empty string")
+
+    agent = args.get("agent_identity")
+    if isinstance(agent, str) and agent.strip() == "":
+        agent = None
+
+    max_depth = int(args.get("max_depth", 2))
+    max_depth = max(1, min(max_depth, 5))
+
+    limit = int(args.get("limit", 5))
+    limit = max(1, min(limit, 100))
+
+    return store.graph_walk(
+        entity_type=entity_type,
+        entity_value=entity_value,
+        agent_identity=agent,
+        max_depth=max_depth,
+        limit=limit,
+    )
+
+
+def memory_common_topics(
+    store: MemoryStore, args: Dict[str, Any]
+) -> List[Dict[str, Any]]:
+    """Retrieve clusters/cliques of heavily co-occurring entities."""
+    agent = args.get("agent_identity")
+    if isinstance(agent, str) and agent.strip() == "":
+        agent = None
+
+    min_strength = int(args.get("min_strength", 2))
+    min_strength = max(1, min_strength)
+
+    limit = int(args.get("limit", 10))
+    limit = max(1, min(limit, 100))
+
+    return store.common_topics(
+        agent_identity=agent,
+        min_strength=min_strength,
+        limit=limit,
+    )
+
+
+def memory_confirm(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
+    """Increment confirm_count in metadata JSONB for the given entry ID."""
+    entry_id = args.get("id")
+    if entry_id is None:
+        raise ValueError("id is required")
+    try:
+        entry_id = int(entry_id)
+    except (TypeError, ValueError):
+        raise ValueError("id must be an integer")
+
+    success = store.confirm_entry(entry_id)
+    return {"id": entry_id, "success": success}
+
+
+def memory_reject(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
+    """Increment reject_count in metadata JSONB for the given entry ID."""
+    entry_id = args.get("id")
+    if entry_id is None:
+        raise ValueError("id is required")
+    try:
+        entry_id = int(entry_id)
+    except (TypeError, ValueError):
+        raise ValueError("id must be an integer")
+
+    success = store.reject_entry(entry_id)
+    return {"id": entry_id, "success": success}
+
+
+def memory_summarize_session(
+    store: MemoryStore, args: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Compute the vector centroid of a session's turns and find the K closest turns."""
+    session_id = args.get("session_id")
+    if not isinstance(session_id, str) or not session_id.strip():
+        raise ValueError("session_id must be a non-empty string")
+
+    limit = int(args.get("limit", 5))
+    limit = max(1, min(limit, 100))
+
+    return store.summarize_session(
+        session_id=session_id,
+        limit=limit,
+    )
+
+
+def memory_retrieve(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
+    """Retrieve the original full content of a memory entry by its integer ID.
+
+    args:
+      id: the integer row ID of the memory entry to retrieve.
+    """
+    entry_id = args.get("id")
+    if entry_id is None:
+        raise ValueError("id is required")
+    try:
+        entry_id = int(entry_id)
+    except (TypeError, ValueError):
+        raise ValueError("id must be an integer")
+
+    content = store.fetch_full(entry_id)
+    if content is None:
+        return {"id": entry_id, "found": False, "content": None}
+    return {"id": entry_id, "found": True, "content": content}
+
+
+def memory_stats(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
+    """Return metrics from Hexus database and background async queue stats."""
+    db_stats = {
+        "memory_entries_count": store.count(agent_identity=None, target=None),
+        "conversations_count": store.count_turns(agent_identity=None, session_id=None),
+    }
+
+    # Try to get queue stats from any active AsyncWriter instances
+    queue_stats = {}
+    from hexus.writer import _active_writers
+
+    for obj in _active_writers:
+        queue_stats = obj.stats()
+        break
+
+    cleanup_stats = getattr(store, "_cleanup_metrics", None) or {
+        "total_runs": 0,
+        "last_run_timestamp": 0.0,
+        "deleted_conversations": 0,
+        "deleted_memories": 0,
+        "deleted_delegations": 0,
+    }
+
+    consolidation_stats = getattr(store, "_consolidation_metrics", None) or {
+        "total_runs": 0,
+        "last_run_timestamp": 0.0,
+        "low_confidence_processed": 0,
+        "low_confidence_deletions": 0,
+        "low_confidence_replacements": 0,
+        "cooccurring_processed_topics": 0,
+        "cooccurring_replacements": 0,
+    }
+
+    return {
+        "status": "ok",
+        "database": db_stats,
+        "async_writer": queue_stats
+        or {
+            "queue_size": 0,
+            "queue_max": 256,
+            "dropped_total": 0,
+            "thread_alive": False,
+            "p50_latency_sec": float("nan"),
+            "p95_latency_sec": float("nan"),
+        },
+        "background_cleanup": cleanup_stats,
+        "background_consolidation": consolidation_stats,
     }

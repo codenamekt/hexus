@@ -24,8 +24,11 @@ import logging
 import queue
 import threading
 from typing import Any, Callable, Dict, Optional
+import weakref
 
 logger = logging.getLogger(__name__)
+
+_active_writers: weakref.WeakSet[AsyncWriter] = weakref.WeakSet()
 
 
 # Pending-write payload — kept small so the queue stays bounded.
@@ -61,15 +64,20 @@ class AsyncWriter:
       - Call `shutdown(timeout=5)` on plugin teardown to drain gracefully.
     """
 
-    def __init__(self, worker_fn: Callable[[_PendingWrite], None], *, maxsize: int = 256):
+    def __init__(
+        self, worker_fn: Callable[[_PendingWrite], None], *, maxsize: int = 256
+    ):
         self._worker_fn = worker_fn
-        self._queue: "queue.Queue[Optional[_PendingWrite]]" = queue.Queue(maxsize=maxsize)
+        self._queue: "queue.Queue[Optional[_PendingWrite]]" = queue.Queue(
+            maxsize=maxsize
+        )
         self._thread: Optional[threading.Thread] = None
         self._stop = threading.Event()
         self._dropped = 0
         self._dropped_warned = False
         self._lock = threading.Lock()
-        self._latencies: List[float] = []
+        self._latencies: list[float] = []
+        _active_writers.add(self)
 
     # -- Public API ----------------------------------------------------------
 
@@ -158,6 +166,7 @@ class AsyncWriter:
 
     def _run(self) -> None:
         import time
+
         while not self._stop.is_set():
             try:
                 item = self._queue.get(timeout=0.5)

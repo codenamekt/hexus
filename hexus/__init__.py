@@ -52,14 +52,18 @@ try:
     from agent.memory_provider import MemoryProvider
     from tools.registry import tool_error
     from hermes_cli.config import cfg_get
-except ImportError:  # pragma: no cover - standalone smoke tests do not install hermes-agent
+except (
+    ImportError
+):  # pragma: no cover - standalone smoke tests do not install hermes-agent
     MemoryProvider = None  # type: ignore[assignment]
     tool_error = None  # type: ignore[assignment]
     cfg_get = None  # type: ignore[assignment]
 
 from .embed import embed, EmbeddingError
 from .store import MemoryStore
+import hashlib
 from .writer import AsyncWriter, _PendingWrite
+from .pipeline.router import ContentRouter
 
 
 # Boilerplate / acknowledgement-only turns that are not worth embedding or
@@ -76,6 +80,9 @@ _NOISE_RE = re.compile(
 )
 
 logger = logging.getLogger(__name__)
+
+if os.environ.get("HEXUS_DEBUG", "").lower() in ("1", "true", "yes", "on"):
+    logger.setLevel(logging.DEBUG)
 
 
 # ---------------------------------------------------------------------------
@@ -159,6 +166,11 @@ RECALL_MEMORY_SCHEMA = {
                 "description": "Max results (1-20, default 5).",
                 "default": 5,
             },
+            "min_confidence": {
+                "type": "number",
+                "description": "Minimum confidence ratio of confirm/(confirm+reject) (0..1). Default 0.",
+                "default": 0.0,
+            },
         },
         "required": ["query"],
     },
@@ -195,8 +207,183 @@ RECALL_DELEGATION_SCHEMA = {
 }
 
 
+ENTITY_GRAPH_SCHEMA = {
+    "name": "entity_graph",
+    "description": (
+        "Retrieve entities that co-occur with a target entity. "
+        "Helps you find related topics, systems, or concepts in memory."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "entity_type": {
+                "type": "string",
+                "description": "The type of starting entity (e.g. 'docker_image', 'url').",
+            },
+            "entity_value": {
+                "type": "string",
+                "description": "The specific entity value (e.g. 'postgres', 'github.com').",
+            },
+            "scope": {
+                "type": "string",
+                "description": "Theme scope: 'current', 'all', or a named agent.",
+                "default": "current",
+            },
+            "limit": {
+                "type": "integer",
+                "description": "Max results (1-20, default 5).",
+                "default": 5,
+            },
+        },
+        "required": ["entity_type", "entity_value"],
+    },
+}
+
+GRAPH_WALK_SCHEMA = {
+    "name": "graph_walk",
+    "description": (
+        "Traverse the co-occurrence graph up to N hops away from a start entity. "
+        "Lets you trace multi-hop connections and related concepts."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "entity_type": {
+                "type": "string",
+                "description": "Type of starting entity.",
+            },
+            "entity_value": {
+                "type": "string",
+                "description": "Value of starting entity.",
+            },
+            "scope": {
+                "type": "string",
+                "description": "Theme scope: 'current', 'all', or a named agent.",
+                "default": "current",
+            },
+            "max_depth": {
+                "type": "integer",
+                "description": "Maximum hops to walk (1-5, default 2).",
+                "default": 2,
+            },
+            "limit": {
+                "type": "integer",
+                "description": "Max results (1-20, default 5).",
+                "default": 5,
+            },
+        },
+        "required": ["entity_type", "entity_value"],
+    },
+}
+
+COMMON_TOPICS_SCHEMA = {
+    "name": "common_topics",
+    "description": "Retrieve clusters/cliques of heavily co-occurring entities.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "scope": {
+                "type": "string",
+                "description": "Theme scope: 'current', 'all', or a named agent.",
+                "default": "current",
+            },
+            "min_strength": {
+                "type": "integer",
+                "description": "Minimum count of co-occurrences.",
+                "default": 2,
+            },
+            "limit": {
+                "type": "integer",
+                "description": "Max results (1-20, default 10).",
+                "default": 10,
+            },
+        },
+        "required": [],
+    },
+}
+
+CONFIRM_MEMORY_SCHEMA = {
+    "name": "confirm_memory",
+    "description": "Increment confirm_count in metadata JSONB for the given entry ID to confirm its relevance.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "id": {
+                "type": "integer",
+                "description": "The integer ID of the memory entry to confirm.",
+            },
+        },
+        "required": ["id"],
+    },
+}
+
+REJECT_MEMORY_SCHEMA = {
+    "name": "reject_memory",
+    "description": "Increment reject_count in metadata JSONB for the given entry ID to flag it as noise.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "id": {
+                "type": "integer",
+                "description": "The integer ID of the memory entry to reject.",
+            },
+        },
+        "required": ["id"],
+    },
+}
+
+SUMMARIZE_SESSION_SCHEMA = {
+    "name": "summarize_session",
+    "description": "Compute the vector centroid of a session's turns and find the K closest turns.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "session_id": {
+                "type": "string",
+                "description": "The session identifier to summarize.",
+            },
+            "limit": {
+                "type": "integer",
+                "description": "Max results (1-20, default 5).",
+                "default": 5,
+            },
+        },
+        "required": ["session_id"],
+    },
+}
+
+HEADROOM_RETRIEVE_SCHEMA = {
+    "name": "headroom_retrieve",
+    "description": (
+        "Retrieve the original full content of a memory entry by its integer ID. "
+        "Use this when a memory entry returned by recall_memory contains a compressed/truncated "
+        "version of the content, and you need to inspect the full detail."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "id": {
+                "type": "integer",
+                "description": "The integer ID of the memory entry to retrieve.",
+            },
+        },
+        "required": ["id"],
+    },
+}
+
+MEMORY_STATS_SCHEMA = {
+    "name": "memory_stats",
+    "description": "Return metrics from Hexus database and background async queue stats.",
+    "parameters": {
+        "type": "object",
+        "properties": {},
+    },
+}
+
+
 # ---------------------------------------------------------------------------
 # Config
+
 # ---------------------------------------------------------------------------
 
 DEFAULTS = {
@@ -232,21 +419,29 @@ DEFAULTS = {
     # on a known thread with visible log output, e.g. on the NUC's
     # gateway boot path.
     "embed_eager_load": False,
+    "entity_extractor_enabled": True,
+    "entity_extractor_patterns": None,
+    "webhook_url": None,
+    "webhook_secret": None,
 }
 
 
 def _load_plugin_config() -> dict:
     try:
         from hermes_constants import get_hermes_home
+
         config_path = get_hermes_home() / "config.yaml"
         if not config_path.exists():
             return {}
         import yaml
+
         with open(config_path, encoding="utf-8-sig") as fh:
             data = yaml.safe_load(fh) or {}
         if cfg_get is None:
             return {}
-        expanded = _expand_config_vars(cfg_get(data, "plugins", "hexus", default={}) or {})
+        expanded = _expand_config_vars(
+            cfg_get(data, "plugins", "hexus", default={}) or {}
+        )
         return expanded if isinstance(expanded, dict) else {}
     except Exception:  # noqa: BLE001
         return {}
@@ -296,6 +491,7 @@ def _expand_env_match(match: re.Match[str]) -> str:
 # Provider
 # ---------------------------------------------------------------------------
 
+
 class HexusMemoryProvider(MemoryProvider or object):
     """Postgres mirror of built-in memory entries, with semantic recall."""
 
@@ -310,10 +506,11 @@ class HexusMemoryProvider(MemoryProvider or object):
         self._writer: Optional[AsyncWriter] = None
         self._agent_identity: str = "default"
         self._session_id: str = ""
-        self._healthy: bool = False
-        self._embed_warned: bool = False
+        self._healthy = False
+        self._embed_warned = False
         self._last_md_mtimes: Dict[str, float] = {}
         self._hermes_home: Optional[str] = None
+        self._content_router = ContentRouter()
 
     @property
     def name(self) -> str:
@@ -324,6 +521,7 @@ class HexusMemoryProvider(MemoryProvider or object):
     def is_available(self) -> bool:
         try:
             import psycopg  # noqa: F401
+
             return True
         except ImportError:
             return False
@@ -355,6 +553,13 @@ class HexusMemoryProvider(MemoryProvider or object):
             or kwargs.get("agent_identity")  # accept 'default' if nothing else set
             or "default"
         )
+        logger.debug(
+            "hexus: initialized HexusMemoryProvider. session_id=%s, hermes_home=%s, agent_identity=%s, healthy_initially=%s",
+            self._session_id,
+            self._hermes_home,
+            self._agent_identity,
+            self._healthy,
+        )
 
         # Re-initialization guard (v0.3.1): one registered provider instance
         # can have initialize() called again for a new session — the gateway
@@ -368,7 +573,11 @@ class HexusMemoryProvider(MemoryProvider or object):
         if self._store is not None or self._writer is not None:
             self.shutdown()
 
-        self._store = MemoryStore(self._config["dsn"])
+        self._store = MemoryStore(
+            self._config["dsn"],
+            entity_extractor_enabled=self._config.get("entity_extractor_enabled", True),
+            entity_extractor_patterns=self._config.get("entity_extractor_patterns"),
+        )
         try:
             # Schema is verify-only at runtime — admin applies the
             # migration out-of-band (see plugin README install step).
@@ -396,9 +605,12 @@ class HexusMemoryProvider(MemoryProvider or object):
         # v0.4.0 — optionally warm the local embedder now so the cold
         # start lands on a known thread with a visible log line, rather
         # than on the first user-facing embed call. Default False.
-        if self._config.get("embed_eager_load", False) and not self._config.get("embed_url"):
+        if self._config.get("embed_eager_load", False) and not self._config.get(
+            "embed_url"
+        ):
             try:
                 from .embedder import get_default_embedder, DEFAULT_MODEL
+
                 get_default_embedder(
                     model_name=self._config.get("embed_model") or DEFAULT_MODEL
                 ).ensure_loaded()
@@ -410,6 +622,20 @@ class HexusMemoryProvider(MemoryProvider or object):
         # new writes captured via on_memory_write.
         if self._healthy and self._config.get("bulk_sync_on_init", True):
             self._bulk_sync_from_disk(self._hermes_home)
+
+        # Dispatch session_new webhook event
+        if self._config.get("webhook_url"):
+            from .webhook.dispatcher import dispatch_webhook
+
+            dispatch_webhook(
+                url=self._config.get("webhook_url"),
+                secret=self._config.get("webhook_secret"),
+                event="session_new",
+                payload={
+                    "session_id": self._session_id,
+                    "agent_identity": self._agent_identity,
+                },
+            )
 
     def shutdown(self) -> None:
         # Drain the in-flight writes first so we don't drop work...
@@ -423,18 +649,26 @@ class HexusMemoryProvider(MemoryProvider or object):
         self._healthy = False
 
     def on_session_switch(self, new_session_id: str, **kwargs) -> None:
+        logger.debug("hexus: on_session_switch to session_id=%s", new_session_id)
         self._session_id = new_session_id
 
     def on_turn_start(self, turn_number: int, message: str, **kwargs) -> None:
-        """Called at the start of each turn. Check if memory files on disk have changed and re-sync."""
+        """Called at the start of each turn. Check if memory/skill files on disk have changed and re-sync."""
+        logger.debug(
+            "hexus: on_turn_start. turn_number=%d, message_len=%d",
+            turn_number,
+            len(message) if message else 0,
+        )
         if self._healthy:
             self._check_and_sync_markdown_files()
+            self._sync_skills_from_disk()
 
     def _check_and_sync_markdown_files(self) -> None:
         """Check modification times of MEMORY.md and USER.md on disk, and trigger sync if changed."""
         if not self._hermes_home:
             try:
                 from hermes_constants import get_hermes_home
+
                 self._hermes_home = str(get_hermes_home())
             except Exception:
                 return
@@ -446,15 +680,83 @@ class HexusMemoryProvider(MemoryProvider or object):
             if fpath.exists():
                 try:
                     mtime = os.path.getmtime(fpath)
-                    if fname not in self._last_md_mtimes or mtime > self._last_md_mtimes[fname]:
+                    if (
+                        fname not in self._last_md_mtimes
+                        or mtime > self._last_md_mtimes[fname]
+                    ):
                         changed = True
                         self._last_md_mtimes[fname] = mtime
                 except Exception as exc:
                     logger.debug("hexus failed to get mtime for %s: %s", fname, exc)
 
         if changed:
-            logger.info("hexus: detected local changes in memory markdown files, starting sync")
+            logger.info(
+                "hexus: detected local changes in memory markdown files, starting sync"
+            )
             self._bulk_sync_from_disk(self._hermes_home)
+
+    def _sync_skills_from_disk(self) -> None:
+        if not self._store or not self._hermes_home:
+            logger.debug(
+                "hexus: skills sync skipped. store_exists=%s, hermes_home=%s",
+                self._store is not None,
+                self._hermes_home,
+            )
+            return
+
+        skills_dir = Path(self._hermes_home) / "skills"
+        logger.debug("hexus: scanning skills directory: %s", skills_dir)
+        if not skills_dir.exists():
+            logger.debug("hexus: skills directory does not exist: %s", skills_dir)
+            return
+
+        for skill_file in skills_dir.rglob("SKILL.md"):
+            try:
+                mtime = os.path.getmtime(skill_file)
+                rel_path = str(skill_file.relative_to(skills_dir))
+
+                # Check if we already processed this mtime
+                if (
+                    rel_path in self._last_md_mtimes
+                    and mtime <= self._last_md_mtimes[rel_path]
+                ):
+                    logger.debug(
+                        "hexus: skill '%s' unmodified (mtime: %f), skipping sync",
+                        rel_path,
+                        mtime,
+                    )
+                    continue
+
+                # Parse skill_file
+                content = skill_file.read_text(encoding="utf-8")
+                if not content.strip():
+                    logger.debug("hexus: skill '%s' content is empty", rel_path)
+                    continue
+
+                # Extract skill name from folder name
+                skill_name = skill_file.parent.name
+                logger.debug("hexus: syncing skill '%s' (mtime: %f)", skill_name, mtime)
+
+                # Add to DB
+                vec = self._maybe_embed(content)
+                self._store.add(
+                    agent_identity=self._agent_identity,
+                    target="memory",
+                    content=f"[Skill: {skill_name}] {content}",
+                    embedding=vec,
+                    metadata={
+                        "source": "skill_sync",
+                        "skill_name": skill_name,
+                        "file_path": str(skill_file),
+                    },
+                    compressed=None,
+                    content_hash=hashlib.sha256(content.encode("utf-8")).digest(),
+                )
+
+                self._last_md_mtimes[rel_path] = mtime
+                logger.info("hexus: synced skill '%s' from disk", skill_name)
+            except Exception as exc:
+                logger.debug("hexus failed to sync skill %s: %s", skill_file, exc)
 
     # -- System prompt + ambient recall --------------------------------------
 
@@ -617,6 +919,9 @@ class HexusMemoryProvider(MemoryProvider or object):
             return
         try:
             if item.action == "add":
+                compressed = self._content_router.maybe_compress(item.content)
+                hash_target = compressed if compressed is not None else item.content
+                content_hash = hashlib.sha256(hash_target.encode("utf-8")).digest()
                 vec = self._maybe_embed(item.content)
                 self._store.add(
                     agent_identity=item.agent_identity,
@@ -624,8 +929,27 @@ class HexusMemoryProvider(MemoryProvider or object):
                     content=item.content,
                     embedding=vec,
                     metadata=item.metadata,
+                    compressed=compressed,
+                    content_hash=content_hash,
                 )
+                if self._config.get("webhook_url"):
+                    from .webhook.dispatcher import dispatch_webhook
+
+                    dispatch_webhook(
+                        url=self._config.get("webhook_url"),
+                        secret=self._config.get("webhook_secret"),
+                        event="memory_retain",
+                        payload={
+                            "agent_identity": item.agent_identity,
+                            "target": item.target,
+                            "content": item.content,
+                            "metadata": item.metadata,
+                        },
+                    )
             elif item.action == "replace":
+                compressed = self._content_router.maybe_compress(item.content)
+                hash_target = compressed if compressed is not None else item.content
+                content_hash = hashlib.sha256(hash_target.encode("utf-8")).digest()
                 old_text = item.extra.get("old_text")
                 vec = self._maybe_embed(item.content)
                 if old_text:
@@ -635,6 +959,8 @@ class HexusMemoryProvider(MemoryProvider or object):
                         old_text=old_text,
                         new_content=item.content,
                         new_embedding=vec,
+                        compressed=compressed,
+                        content_hash=content_hash,
                     )
                     if n == 0:
                         # Nothing matched — degrade to add (built-in wrote
@@ -645,6 +971,8 @@ class HexusMemoryProvider(MemoryProvider or object):
                             content=item.content,
                             embedding=vec,
                             metadata=item.metadata,
+                            compressed=compressed,
+                            content_hash=content_hash,
                         )
                 else:
                     # No old_text in metadata → can't locate prior row;
@@ -655,6 +983,22 @@ class HexusMemoryProvider(MemoryProvider or object):
                         content=item.content,
                         embedding=vec,
                         metadata=item.metadata,
+                        compressed=compressed,
+                        content_hash=content_hash,
+                    )
+                if self._config.get("webhook_url"):
+                    from .webhook.dispatcher import dispatch_webhook
+
+                    dispatch_webhook(
+                        url=self._config.get("webhook_url"),
+                        secret=self._config.get("webhook_secret"),
+                        event="memory_retain",
+                        payload={
+                            "agent_identity": item.agent_identity,
+                            "target": item.target,
+                            "content": item.content,
+                            "metadata": item.metadata,
+                        },
                     )
             elif item.action == "remove":
                 self._store.remove(
@@ -662,6 +1006,19 @@ class HexusMemoryProvider(MemoryProvider or object):
                     target=item.target,
                     old_text=item.content,
                 )
+                if self._config.get("webhook_url"):
+                    from .webhook.dispatcher import dispatch_webhook
+
+                    dispatch_webhook(
+                        url=self._config.get("webhook_url"),
+                        secret=self._config.get("webhook_secret"),
+                        event="memory_forget",
+                        payload={
+                            "agent_identity": item.agent_identity,
+                            "target": item.target,
+                            "content": item.content,
+                        },
+                    )
             elif item.action == "turn":
                 role = item.extra.get("role") or "user"
                 sid = item.extra.get("session_id") or "default"
@@ -677,7 +1034,9 @@ class HexusMemoryProvider(MemoryProvider or object):
             elif item.action == "delegation":
                 parent_sid = item.metadata.get("parent_session_id") or "default"
                 child_sid = item.extra.get("child_session_id") or "default"
-                combined_text = f"Task: {item.content}\nResult: {item.extra.get('result', '')}"
+                combined_text = (
+                    f"Task: {item.content}\nResult: {item.extra.get('result', '')}"
+                )
                 vec = self._maybe_embed(combined_text)
                 self._store.record_delegation(
                     parent_session_id=parent_sid,
@@ -688,6 +1047,24 @@ class HexusMemoryProvider(MemoryProvider or object):
                     embedding=vec,
                     metadata=item.metadata,
                 )
+            elif item.action == "summarize_session_hook":
+                summary_text = self._generate_session_summary(item.content)
+                if summary_text:
+                    vec = self._maybe_embed(summary_text)
+                    self._store.add(
+                        agent_identity=item.agent_identity,
+                        target="memory",
+                        content=f"[Session Summary for {item.metadata.get('session_id', '')}] {summary_text}",
+                        embedding=vec,
+                        metadata={
+                            "session_id": item.metadata.get("session_id"),
+                            "source": "session_summarizer",
+                        },
+                        compressed=None,
+                        content_hash=hashlib.sha256(
+                            summary_text.encode("utf-8")
+                        ).digest(),
+                    )
         except Exception as exc:  # noqa: BLE001
             logger.debug(
                 "hexus worker (%s/%s/%s) failed: %s",
@@ -696,6 +1073,84 @@ class HexusMemoryProvider(MemoryProvider or object):
                 item.target,
                 str(exc)[:200],
             )
+
+    def _generate_session_summary(self, messages_json: str) -> Optional[str]:
+        import urllib.request
+
+        try:
+            messages = json.loads(messages_json)
+            if not messages:
+                return None
+
+            # Format history
+            history = []
+            for m in messages:
+                role = m.get("role", "unknown")
+                content = m.get("content", "")
+                if content:
+                    history.append(f"{role.upper()}: {content}")
+
+            if not history:
+                return None
+
+            history_str = "\n".join(history)
+
+            api_base = os.environ.get("LLM_API_BASE") or "http://headroom:8787/v1"
+            # Try to get LITELLM_MASTER_KEY or HEADROOM_INTERNAL_TOKEN
+            api_key = os.environ.get("HEADROOM_INTERNAL_TOKEN") or os.environ.get(
+                "LITELLM_MASTER_KEY"
+            )
+
+            url = f"{api_base.rstrip('/')}/chat/completions"
+            summary_model = os.environ.get("HEXUS_SUMMARY_MODEL")
+            if not summary_model:
+                raise ValueError(
+                    "HEXUS_SUMMARY_MODEL environment variable is not configured."
+                )
+            payload = {
+                "model": summary_model,
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are an assistant that summarizes conversation transcripts. "
+                            "Write a highly concise, 1-2 sentence summary of the key outcomes, "
+                            "user preferences, and facts learned during this session. "
+                            "Do not include boilerplate like 'In this session...' or 'The user...'"
+                        ),
+                    },
+                    {"role": "user", "content": f"Transcript:\n{history_str}"},
+                ],
+                "temperature": 0.3,
+                "max_tokens": 150,
+            }
+
+            logger.debug(
+                "hexus: generating session summary. url=%s, model=%s, api_key_configured=%s, history_turns=%d",
+                url,
+                summary_model,
+                api_key is not None,
+                len(history),
+            )
+
+            req = urllib.request.Request(
+                url,
+                data=json.dumps(payload).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+            )
+            if api_key:
+                req.add_header("Authorization", f"Bearer {api_key}")
+
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                resp_data = json.loads(resp.read().decode("utf-8"))
+                summary_content = resp_data["choices"][0]["message"]["content"].strip()
+                logger.debug(
+                    "hexus: session summary successfully generated: %s", summary_content
+                )
+                return summary_content
+        except Exception as e:
+            logger.debug("hexus failed to generate session summary via LLM: %s", e)
+            return None
 
     # -- Observability Hooks (M4) --------------------------------------------
 
@@ -756,6 +1211,29 @@ class HexusMemoryProvider(MemoryProvider or object):
             metadata={"session_end": True},
         )
 
+        if messages and len(messages) >= 2:
+            self._writer.enqueue(
+                action="summarize_session_hook",
+                agent_identity=self._agent_identity,
+                target="memory",
+                content=json.dumps(messages),
+                metadata={"session_id": self._session_id},
+            )
+
+        # Dispatch session_end webhook event
+        if self._config.get("webhook_url"):
+            from .webhook.dispatcher import dispatch_webhook
+
+            dispatch_webhook(
+                url=self._config.get("webhook_url"),
+                secret=self._config.get("webhook_secret"),
+                event="session_end",
+                payload={
+                    "session_id": self._session_id,
+                    "agent_identity": self._agent_identity,
+                },
+            )
+
     # -- Bulk sync (v0.1.1) --------------------------------------------------
 
     def _bulk_sync_from_disk(self, hermes_home: Optional[str]) -> None:
@@ -772,6 +1250,7 @@ class HexusMemoryProvider(MemoryProvider or object):
             # Fall back to hermes_constants if the runtime didn't pass it.
             try:
                 from hermes_constants import get_hermes_home
+
                 hermes_home = str(get_hermes_home())
             except Exception:  # noqa: BLE001
                 return
@@ -808,22 +1287,53 @@ class HexusMemoryProvider(MemoryProvider or object):
             return None
         base_url = self._config["embed_url"]
         model = self._config["embed_model"]
+
         def _fn(text: str):
             return embed(text, base_url=base_url, model=model)
+
         return _fn
 
     # -- Tool surface --------------------------------------------------------
 
     def get_tool_schemas(self) -> List[Dict[str, Any]]:
-        return [RECALL_MEMORY_SCHEMA, RECALL_CONVERSATION_SCHEMA, RECALL_DELEGATION_SCHEMA]
+        return [
+            RECALL_MEMORY_SCHEMA,
+            RECALL_CONVERSATION_SCHEMA,
+            RECALL_DELEGATION_SCHEMA,
+            ENTITY_GRAPH_SCHEMA,
+            GRAPH_WALK_SCHEMA,
+            COMMON_TOPICS_SCHEMA,
+            CONFIRM_MEMORY_SCHEMA,
+            REJECT_MEMORY_SCHEMA,
+            SUMMARIZE_SESSION_SCHEMA,
+            HEADROOM_RETRIEVE_SCHEMA,
+            MEMORY_STATS_SCHEMA,
+        ]
 
     def handle_tool_call(self, tool_name: str, args: Dict[str, Any], **kwargs) -> str:
         if tool_name == "recall_conversation":
             return self._handle_recall_conversation(args)
         if tool_name == "recall_delegation":
             return self._handle_recall_delegation(args)
+        if tool_name == "entity_graph":
+            return self._handle_entity_graph(args)
+        if tool_name == "graph_walk":
+            return self._handle_graph_walk(args)
+        if tool_name == "common_topics":
+            return self._handle_common_topics(args)
+        if tool_name == "confirm_memory":
+            return self._handle_confirm_memory(args)
+        if tool_name == "reject_memory":
+            return self._handle_reject_memory(args)
+        if tool_name == "summarize_session":
+            return self._handle_summarize_session(args)
+        if tool_name == "headroom_retrieve":
+            return self._handle_headroom_retrieve(args)
+        if tool_name == "memory_stats":
+            return self._handle_memory_stats(args)
         if tool_name != "recall_memory":
             return tool_error(f"Unknown tool: {tool_name}")
+
         if not self._healthy or not self._store:
             return json.dumps({"results": [], "count": 0, "error": "hexus unavailable"})
 
@@ -838,7 +1348,9 @@ class HexusMemoryProvider(MemoryProvider or object):
 
         # Scope resolution: 'current' → my agent_identity; 'all' → no filter;
         # anything else → treat as explicit theme name.
-        scope = (args.get("scope") or self._config.get("scope_default") or "current").strip()
+        scope = (
+            args.get("scope") or self._config.get("scope_default") or "current"
+        ).strip()
         if scope == "current":
             agent_filter: Optional[str] = self._agent_identity
         elif scope == "all":
@@ -851,6 +1363,11 @@ class HexusMemoryProvider(MemoryProvider or object):
         target_filter: Optional[str] = None if target_arg == "both" else target_arg
         if target_filter not in (None, "memory", "user"):
             return tool_error(f"Invalid target: {target_arg!r}")
+
+        try:
+            min_confidence = float(args.get("min_confidence", 0.0))
+        except (TypeError, ValueError):
+            min_confidence = 0.0
 
         try:
             vec = embed(
@@ -867,6 +1384,7 @@ class HexusMemoryProvider(MemoryProvider or object):
                 agent_identity=agent_filter,
                 target=target_filter,
                 limit=limit,
+                min_confidence=min_confidence,
             )
         except Exception as exc:  # noqa: BLE001
             return json.dumps({"results": [], "count": 0, "error": f"db: {exc}"})
@@ -1003,6 +1521,214 @@ class HexusMemoryProvider(MemoryProvider or object):
             )
         return json.dumps({"results": results, "count": len(results)})
 
+    def _handle_entity_graph(self, args: Dict[str, Any]) -> str:
+        """Tool handler for entity_graph."""
+        if not self._healthy or not self._store:
+            return json.dumps({"error": "hexus unavailable"})
+
+        entity_type = (args.get("entity_type") or "").strip()
+        if not entity_type:
+            return tool_error("Missing required arg: entity_type")
+        entity_value = (args.get("entity_value") or "").strip()
+        if not entity_value:
+            return tool_error("Missing required arg: entity_value")
+
+        try:
+            limit = max(1, min(int(args.get("limit", 5)), 20))
+        except (TypeError, ValueError):
+            limit = 5
+
+        scope = (args.get("scope") or "current").strip()
+        agent_filter: Optional[str] = None
+        if scope == "current":
+            agent_filter = self._agent_identity
+        elif scope == "all":
+            pass
+        else:
+            agent_filter = scope
+
+        try:
+            res = self._store.entity_graph(
+                entity_type=entity_type,
+                entity_value=entity_value,
+                agent_identity=agent_filter,
+                limit=limit,
+            )
+            return json.dumps(res)
+        except Exception as exc:
+            return json.dumps({"error": f"db: {exc}"})
+
+    def _handle_graph_walk(self, args: Dict[str, Any]) -> str:
+        """Tool handler for graph_walk."""
+        if not self._healthy or not self._store:
+            return json.dumps({"error": "hexus unavailable"})
+
+        entity_type = (args.get("entity_type") or "").strip()
+        if not entity_type:
+            return tool_error("Missing required arg: entity_type")
+        entity_value = (args.get("entity_value") or "").strip()
+        if not entity_value:
+            return tool_error("Missing required arg: entity_value")
+
+        try:
+            max_depth = max(1, min(int(args.get("max_depth", 2)), 5))
+        except (TypeError, ValueError):
+            max_depth = 2
+
+        try:
+            limit = max(1, min(int(args.get("limit", 5)), 20))
+        except (TypeError, ValueError):
+            limit = 5
+
+        scope = (args.get("scope") or "current").strip()
+        agent_filter: Optional[str] = None
+        if scope == "current":
+            agent_filter = self._agent_identity
+        elif scope == "all":
+            pass
+        else:
+            agent_filter = scope
+
+        try:
+            res = self._store.graph_walk(
+                entity_type=entity_type,
+                entity_value=entity_value,
+                agent_identity=agent_filter,
+                max_depth=max_depth,
+                limit=limit,
+            )
+            return json.dumps({"results": res})
+        except Exception as exc:
+            return json.dumps({"error": f"db: {exc}"})
+
+    def _handle_common_topics(self, args: Dict[str, Any]) -> str:
+        """Tool handler for common_topics."""
+        if not self._healthy or not self._store:
+            return json.dumps({"error": "hexus unavailable"})
+
+        try:
+            min_strength = max(1, int(args.get("min_strength", 2)))
+        except (TypeError, ValueError):
+            min_strength = 2
+
+        try:
+            limit = max(1, min(int(args.get("limit", 10)), 20))
+        except (TypeError, ValueError):
+            limit = 10
+
+        scope = (args.get("scope") or "current").strip()
+        agent_filter: Optional[str] = None
+        if scope == "current":
+            agent_filter = self._agent_identity
+        elif scope == "all":
+            pass
+        else:
+            agent_filter = scope
+
+        try:
+            res = self._store.common_topics(
+                agent_identity=agent_filter,
+                min_strength=min_strength,
+                limit=limit,
+            )
+            return json.dumps({"results": res})
+        except Exception as exc:
+            return json.dumps({"error": f"db: {exc}"})
+
+    def _handle_confirm_memory(self, args: Dict[str, Any]) -> str:
+        """Tool handler for confirm_memory."""
+        if not self._healthy or not self._store:
+            return json.dumps({"error": "hexus unavailable"})
+
+        entry_id = args.get("id")
+        if entry_id is None:
+            return tool_error("Missing required arg: id")
+        try:
+            entry_id = int(entry_id)
+        except (TypeError, ValueError):
+            return tool_error("id must be an integer")
+
+        try:
+            success = self._store.confirm_entry(entry_id)
+            return json.dumps({"id": entry_id, "success": success})
+        except Exception as exc:
+            return json.dumps({"error": f"db: {exc}"})
+
+    def _handle_reject_memory(self, args: Dict[str, Any]) -> str:
+        """Tool handler for reject_memory."""
+        if not self._healthy or not self._store:
+            return json.dumps({"error": "hexus unavailable"})
+
+        entry_id = args.get("id")
+        if entry_id is None:
+            return tool_error("Missing required arg: id")
+        try:
+            entry_id = int(entry_id)
+        except (TypeError, ValueError):
+            return tool_error("id must be an integer")
+
+        try:
+            success = self._store.reject_entry(entry_id)
+            return json.dumps({"id": entry_id, "success": success})
+        except Exception as exc:
+            return json.dumps({"error": f"db: {exc}"})
+
+    def _handle_summarize_session(self, args: Dict[str, Any]) -> str:
+        """Tool handler for summarize_session."""
+        if not self._healthy or not self._store:
+            return json.dumps({"error": "hexus unavailable"})
+
+        session_id = (args.get("session_id") or "").strip()
+        if not session_id:
+            return tool_error("Missing required arg: session_id")
+
+        try:
+            limit = max(1, min(int(args.get("limit", 5)), 20))
+        except (TypeError, ValueError):
+            limit = 5
+
+        try:
+            res = self._store.summarize_session(
+                session_id=session_id,
+                limit=limit,
+            )
+            return json.dumps(res)
+        except Exception as exc:
+            return json.dumps({"error": f"db: {exc}"})
+
+    def _handle_headroom_retrieve(self, args: Dict[str, Any]) -> str:
+        """Tool handler for headroom_retrieve."""
+        if not self._healthy or not self._store:
+            return json.dumps({"error": "hexus unavailable"})
+
+        entry_id = args.get("id")
+        if entry_id is None:
+            return tool_error("Missing required arg: id")
+        try:
+            entry_id = int(entry_id)
+        except (TypeError, ValueError):
+            return tool_error("id must be an integer")
+
+        try:
+            content = self._store.fetch_full(entry_id)
+            if content is None:
+                return json.dumps({"id": entry_id, "found": False, "content": None})
+            return json.dumps({"id": entry_id, "found": True, "content": content})
+        except Exception as exc:
+            return json.dumps({"error": f"db: {exc}"})
+
+    def _handle_memory_stats(self, args: Dict[str, Any]) -> str:
+        """Tool handler for memory_stats."""
+        if not self._healthy or not self._store:
+            return json.dumps({"error": "hexus unavailable"})
+        try:
+            from mcp_server.tools import memory_stats
+
+            res = memory_stats(self._store, args)
+            return json.dumps(res)
+        except Exception as exc:
+            return json.dumps({"error": f"stats check failed: {exc}"})
+
     # -- Setup hooks ---------------------------------------------------------
 
     def get_config_schema(self) -> List[Dict[str, Any]]:
@@ -1068,13 +1794,27 @@ class HexusMemoryProvider(MemoryProvider or object):
                 "description": "Turns shorter than this (after strip) are treated as boilerplate and skipped",
                 "default": str(DEFAULTS["turn_min_chars"]),
             },
+            {
+                "key": "webhook_url",
+                "description": "Custom HTTP URL to dispatch webhook payloads upon lifecycle events",
+                "default": "",
+                "required": False,
+            },
+            {
+                "key": "webhook_secret",
+                "description": "Secret token for signing webhook payloads with HMAC-SHA256",
+                "default": "",
+                "required": False,
+            },
         ]
 
     def save_config(self, values: Dict[str, Any], hermes_home: str) -> None:
         from pathlib import Path
+
         config_path = Path(hermes_home) / "config.yaml"
         try:
             import yaml
+
             existing: Dict[str, Any] = {}
             if config_path.exists():
                 with open(config_path, encoding="utf-8-sig") as fh:
@@ -1107,6 +1847,7 @@ class HexusMemoryProvider(MemoryProvider or object):
 # ---------------------------------------------------------------------------
 # Plugin entry point
 # ---------------------------------------------------------------------------
+
 
 def register(ctx) -> None:
     """Register the hexus memory provider with the plugin system."""

@@ -55,7 +55,10 @@ def _run_psql(sql: str, dsn: str) -> str:
     """Execute SQL via psql, return stdout. Raises on non-zero exit."""
     result = subprocess.run(
         ["psql", dsn, "-tAc", sql],
-        capture_output=True, text=True, env=_psql_env(dsn), check=True,
+        capture_output=True,
+        text=True,
+        env=_psql_env(dsn),
+        check=True,
     )
     return result.stdout.strip()
 
@@ -64,6 +67,7 @@ def _run_psql(sql: str, dsn: str) -> str:
 # The tests
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def pg():
     """Skip-everywhere helper: skip the whole module if PG_TEST_DSN unset."""
@@ -71,6 +75,35 @@ def pg():
     if not dsn:
         pytest.skip("PG_TEST_DSN not set")
     return dsn
+
+
+def test_split_sql_statements():
+    """Verify that _split_sql_statements correctly handles semicolons inside comments, quotes, and dollar-quotes."""
+    from hexus.store import MemoryStore
+
+    store = MemoryStore("dbname=test")
+
+    sql = """
+    -- Comment with semicolon;
+    SELECT 1;
+    /* Multi-line comment;
+    with semicolon */
+    SELECT 'string; with semicolon';
+    SELECT "identifier; with semicolon";
+    SELECT $$dollar; quoted$$;
+    SELECT $tag$dollar; tag; quoted$tag$;
+    """
+
+    statements = store._split_sql_statements(sql)
+    assert len(statements) == 5
+    assert statements[0].strip() == "-- Comment with semicolon;\n    SELECT 1"
+    assert (
+        statements[1].strip()
+        == "/* Multi-line comment;\n    with semicolon */\n    SELECT 'string; with semicolon'"
+    )
+    assert statements[2].strip() == 'SELECT "identifier; with semicolon"'
+    assert statements[3].strip() == "SELECT $$dollar; quoted$$"
+    assert statements[4].strip() == "SELECT $tag$dollar; tag; quoted$tag$"
 
 
 def test_migration_file_exists():
@@ -165,7 +198,9 @@ def test_target_check_constraint(pg):
         "  AND contype = 'c'",
         pg,
     )
-    assert "memory" in out and "user" in out, f"CHECK constraint missing or wrong: {out!r}"
+    assert "memory" in out and "user" in out, (
+        f"CHECK constraint missing or wrong: {out!r}"
+    )
 
 
 def test_insert_384_dim_vector_works(pg):
@@ -174,6 +209,7 @@ def test_insert_384_dim_vector_works(pg):
     the suite (the smoke tests clean up by agent_identity; this row
     has a unique random agent)."""
     import secrets
+
     agent = f"migration-test-{secrets.token_hex(4)}"
     try:
         # Build a 384-dim vector literal: "[0.1,0.1,...,0.1]"
@@ -191,7 +227,8 @@ def test_insert_384_dim_vector_works(pg):
         assert out == "384", f"vector_dims returned {out!r}, expected 384"
     finally:
         _run_psql(
-            f"DELETE FROM memory_entries WHERE agent_identity = '{agent}'", pg,
+            f"DELETE FROM memory_entries WHERE agent_identity = '{agent}'",
+            pg,
         )
 
 
@@ -201,14 +238,21 @@ def test_insert_768_dim_vector_rejected(pg):
     dim check provides — even if a buggy embedder produces 768-dim
     vectors, the DB says no."""
     import secrets
+
     agent = f"migration-test-{secrets.token_hex(4)}"
     vec = "[" + ",".join(["0.1"] * 768) + "]"
     # Use a query that we expect to fail; capture the exit code.
     result = subprocess.run(
-        ["psql", pg, "-tAc",
-         f"INSERT INTO memory_entries (agent_identity, target, content, embedding) "
-         f"VALUES ('{agent}', 'memory', 'dim mismatch test', '{vec}'::vector)"],
-        capture_output=True, text=True, env=_psql_env(pg),
+        [
+            "psql",
+            pg,
+            "-tAc",
+            f"INSERT INTO memory_entries (agent_identity, target, content, embedding) "
+            f"VALUES ('{agent}', 'memory', 'dim mismatch test', '{vec}'::vector)",
+        ],
+        capture_output=True,
+        text=True,
+        env=_psql_env(pg),
     )
     assert result.returncode != 0, "DB accepted a 768-dim vector; expected rejection"
     # Make sure the row didn't sneak in.
