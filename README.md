@@ -64,14 +64,32 @@ pip install hexus
 ```
 *Note: Once installed, just point Hermes to it! You can also just drop the `hexus` module files straight into your `~/.hermes/plugins/hexus/` directory. Hermes's discovery system will automatically pick it up and initialize it on startup!*
 
+**Configuration (`hermes.yaml`):**
+When running as a Hermes plugin, configure it directly in your `hermes.yaml` file (not via environment variables):
+
+```yaml
+plugins:
+  memory:
+    provider: hexus
+    config:
+      # The Postgres connection string (required)
+      dsn: "dbname=hermes_memory user=postgres password=postgres_secret host=localhost"
+```
+
 ### Option 2: Docker & MCP Server (Claude, Cursor, etc.)
 The easiest way to run the standalone MCP server is via Docker (GHCR). 
 
 > **Note:** The Docker MCP server requires a running PostgreSQL database with `pgvector` enabled. You can reference or use our provided `docker/compose.yml` file as a quick example to spin one up!
 
+**Environment Variables:**
+When running via Docker or as a standalone MCP server, you can pass the following environment variables:
+* `HEXUS_DSN` - The Postgres connection string (e.g., `dbname=hermes_memory user=postgres password=secret host=pg`).
+* `HEXUS_DB_PASS` - Used by our `compose.yml` to automatically set up the Postgres password.
+* `HEXUS_EMBED_EAGER_LOAD` - Set to `"1"` to pre-load the local embedding model at startup (saves ~1-2s on first use).
+
 ```bash
 # Run the MCP server via HTTP streamable transport on port 8000
-docker run -d --name hexus -p 8000:8000 ghcr.io/codenamekt/hexus:latest
+docker run -d --name hexus -p 8000:8000 -e HEXUS_DSN="dbname=hermes_memory user=postgres host=host.docker.internal" ghcr.io/codenamekt/hexus:latest
 ```
 
 **Using it with Claude Code / Claude Desktop:**
