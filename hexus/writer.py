@@ -107,6 +107,12 @@ class AsyncWriter:
         )
         try:
             self._queue.put_nowait(item)
+            logger.debug(
+                "hexus queue: enqueued write action=%s, agent=%s, target=%s",
+                action,
+                agent_identity,
+                target,
+            )
             return True
         except queue.Full:
             with self._lock:
@@ -179,6 +185,13 @@ class AsyncWriter:
                 t0 = time.perf_counter()
                 self._worker_fn(item)
                 duration = time.perf_counter() - t0
+                logger.debug(
+                    "hexus queue: processed write action=%s, agent=%s, target=%s in %.4fs",
+                    item.action,
+                    item.agent_identity,
+                    item.target,
+                    duration,
+                )
                 with self._lock:
                     self._latencies.append(duration)
                     if len(self._latencies) > 1000:
