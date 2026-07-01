@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hexus"
-version = "0.9.0"
+version = "0.9.1"
 description = "Hexus: Postgres + hexus memory provider plugin for hermes-agent AND a standalone MCP server. Local BERT (MiniLM-L6-v2) embeddings replace the upstream HTTP embedder; multi-agent storage with per-minion themes, async writer, no LLM in the memory hot path."
 readme = "README.md"
 requires-python = ">=3.11"
