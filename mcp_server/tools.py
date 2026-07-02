@@ -1,6 +1,6 @@
 """mcp_server.tools — pure functions implementing the MCP tool surface.
 
-Forked from andreab67/hermes-hexus (BSD-3-Clause).
+Forked from andreab67/hermes-memory-pgvector (BSD-3-Clause).
 
 These functions are transport-agnostic; `server.py` wraps each one as an
 MCP tool. They're also the unit-test surface — every tool is testable

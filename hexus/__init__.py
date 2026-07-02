@@ -1,6 +1,6 @@
 """hexus — Postgres + hexus memory provider for hermes-agent.
 #
-# Forked from andreab67/hermes-hexus (BSD-3-Clause).
+# Forked from andreab67/hermes-memory-pgvector (BSD-3-Clause).
 #
 # Mirrors hermes-agent's built-in `memory` tool entries (MEMORY.md / USER.md
 # in tools/memory_tool.py) into a single Postgres table, adds 384-dim

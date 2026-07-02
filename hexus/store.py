@@ -1,6 +1,6 @@
 """store.py — Postgres ops for the hexus memory plugin.
 #
-# Forked from andreab67/hermes-hexus (BSD-3-Clause).
+# Forked from andreab67/hermes-memory-pgvector (BSD-3-Clause).
 #
 # Wraps psycopg3 + psycopg_pool. Mirrors hermes-agent's native built-in
 # memory model (`memory` tool's add/replace/remove on targets 'memory' /
