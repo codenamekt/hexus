@@ -1749,35 +1749,44 @@ class MemoryStore:
         conversations_ttl_days: Optional[int] = None,
         memories_ttl_days: Optional[int] = None,
         delegations_ttl_days: Optional[int] = None,
+        dry_run: bool = False,
     ) -> Dict[str, int]:
-        """Delete records older than the specified TTL. Returns counts of deleted items."""
+        """Delete records older than the specified TTL. Returns counts of
+        deleted items.
+
+        With ``dry_run=True`` nothing is deleted: each branch runs a
+        ``SELECT count(*)`` instead of a ``DELETE`` and the counts of rows
+        that *would* be removed are returned. Used by the ``memory_cleanup``
+        MCP tool to preview a destructive run before the caller confirms it.
+        """
         deleted = {"conversations": 0, "memory_entries": 0, "delegations": 0}
+        # (table, timestamp column, ttl days) for each configured target.
+        targets = [
+            ("conversations", "ts", conversations_ttl_days),
+            ("memory_entries", "updated_at", memories_ttl_days),
+            ("delegations", "ts", delegations_ttl_days),
+        ]
         with self._get_pool().connection() as conn:
             with conn.cursor() as cur:
-                if conversations_ttl_days is not None and conversations_ttl_days > 0:
-                    limit_date = datetime.now(timezone.utc) - timedelta(
-                        days=conversations_ttl_days
-                    )
-                    cur.execute(
-                        "DELETE FROM conversations WHERE ts < %s", (limit_date,)
-                    )
-                    deleted["conversations"] = cur.rowcount
-                if memories_ttl_days is not None and memories_ttl_days > 0:
-                    limit_date = datetime.now(timezone.utc) - timedelta(
-                        days=memories_ttl_days
-                    )
-                    cur.execute(
-                        "DELETE FROM memory_entries WHERE updated_at < %s",
-                        (limit_date,),
-                    )
-                    deleted["memory_entries"] = cur.rowcount
-                if delegations_ttl_days is not None and delegations_ttl_days > 0:
-                    limit_date = datetime.now(timezone.utc) - timedelta(
-                        days=delegations_ttl_days
-                    )
-                    cur.execute("DELETE FROM delegations WHERE ts < %s", (limit_date,))
-                    deleted["delegations"] = cur.rowcount
-                conn.commit()
+                for table, ts_col, ttl in targets:
+                    if ttl is None or ttl <= 0:
+                        continue
+                    limit_date = datetime.now(timezone.utc) - timedelta(days=ttl)
+                    if dry_run:
+                        # table/ts_col are internal literals (not caller-supplied).
+                        cur.execute(
+                            f"SELECT count(*) FROM {table} WHERE {ts_col} < %s",
+                            (limit_date,),
+                        )
+                        deleted[table] = int(cur.fetchone()[0])
+                    else:
+                        cur.execute(
+                            f"DELETE FROM {table} WHERE {ts_col} < %s",
+                            (limit_date,),
+                        )
+                        deleted[table] = cur.rowcount
+                if not dry_run:
+                    conn.commit()
         return deleted
 
     # -- Maintenance ---------------------------------------------------------

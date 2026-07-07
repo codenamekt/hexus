@@ -354,6 +354,41 @@ def _generate_metrics(store: MemoryStore) -> str:
     return "\n".join(lines)
 
 
+def _wrap_with_bearer_auth(app, token: str):
+    """Wrap an ASGI app so every HTTP request must present
+    ``Authorization: Bearer <token>``.
+
+    Only ``http`` scopes are gated; ``lifespan`` and ``websocket`` scopes
+    pass through untouched, so the streamable-http session manager's
+    lifespan still starts. The comparison is constant-time. This covers all
+    MCP routes plus ``/metrics`` because it wraps the whole app.
+    """
+    import hmac
+
+    expected = f"Bearer {token}"
+
+    async def asgi(scope, receive, send):
+        if scope.get("type") == "http":
+            headers = dict(scope.get("headers") or [])
+            provided = headers.get(b"authorization", b"").decode("latin-1")
+            if not hmac.compare_digest(provided, expected):
+                await send(
+                    {
+                        "type": "http.response.start",
+                        "status": 401,
+                        "headers": [
+                            (b"content-type", b"text/plain; charset=utf-8"),
+                            (b"www-authenticate", b'Bearer realm="hexus"'),
+                        ],
+                    }
+                )
+                await send({"type": "http.response.body", "body": b"Unauthorized"})
+                return
+        await app(scope, receive, send)
+
+    return asgi
+
+
 def _build_server(
     store: MemoryStore,
     *,
@@ -383,7 +418,9 @@ def _build_server(
             "sentence-transformers MiniLM-L6-v2 (384-dim, no network)."
         )
 
-    mcp = FastMCP(name=name, instructions=instructions, host="0.0.0.0", port=8000)
+    # Bind to loopback by default (secure default); the CLI/entrypoint
+    # override host explicitly for network exposure.
+    mcp = FastMCP(name=name, instructions=instructions, host="127.0.0.1", port=8000)
 
     # Attach cleanup metrics store to the MemoryStore instance
     store._cleanup_metrics = {
@@ -951,16 +988,40 @@ def _build_server(
         conversations_ttl_days: Optional[int] = None,
         memories_ttl_days: Optional[int] = None,
         delegations_ttl_days: Optional[int] = None,
+        confirm: bool = False,
     ) -> Dict[str, Any]:
         """Delete stale records from conversations, memory_entries, and delegations based on TTL.
+
+        This is a **fleet-wide, unscoped** destructive operation — it deletes
+        matching rows for every agent, not just the caller's. It therefore
+        defaults to a dry run: without `confirm=true` it returns the counts of
+        rows that WOULD be deleted and deletes nothing.
 
         Args:
           conversations_ttl_days: delete conversations older than this many days (default None/disabled).
           memories_ttl_days: delete memory entries older than this many days (default None/disabled).
           delegations_ttl_days: delete delegations older than this many days (default None/disabled).
+          confirm: must be true to actually delete. Defaults to false (dry run).
 
-        Returns: {"status": "ok", "deleted": {"conversations": N, "memory_entries": M, "delegations": K}}
+        Returns:
+          confirm=false: {"status": "dry_run", "would_delete": {...}, "message": ...}
+          confirm=true:  {"status": "ok", "deleted": {"conversations": N, "memory_entries": M, "delegations": K}}
         """
+        if not confirm:
+            would_delete = store.cleanup_stale_records(
+                conversations_ttl_days=conversations_ttl_days,
+                memories_ttl_days=memories_ttl_days,
+                delegations_ttl_days=delegations_ttl_days,
+                dry_run=True,
+            )
+            return {
+                "status": "dry_run",
+                "would_delete": would_delete,
+                "message": (
+                    "Dry run — nothing deleted. This deletes matching rows for "
+                    "ALL agents. Re-run with confirm=true to proceed."
+                ),
+            }
         deleted = store.cleanup_stale_records(
             conversations_ttl_days=conversations_ttl_days,
             memories_ttl_days=memories_ttl_days,
@@ -1185,6 +1246,24 @@ def _build_server(
             return Response(_generate_metrics(store), media_type="text/plain")
 
         app.add_route("/metrics", metrics)
+
+        # Optional bearer-token auth on the HTTP transport. When
+        # HEXUS_API_TOKEN is set, every HTTP request (MCP calls + /metrics)
+        # must present `Authorization: Bearer <token>`. Wrapping the whole
+        # app (rather than adding Starlette middleware) keeps /metrics
+        # covered and leaves the streamable-http lifespan/websocket scopes
+        # untouched.
+        token = os.environ.get("HEXUS_API_TOKEN")
+        if token:
+            logger.info("HTTP transport: bearer-token auth enabled (HEXUS_API_TOKEN).")
+            return _wrap_with_bearer_auth(app, token)
+        logger.warning(
+            "HEXUS_API_TOKEN is not set — the HTTP transport is UNAUTHENTICATED. "
+            "Any client that can reach this port can read, write, and delete "
+            "memory for every agent (and read /metrics). Set HEXUS_API_TOKEN, "
+            "bind to a trusted interface (--host 127.0.0.1), and/or place the "
+            "server behind an authenticating proxy."
+        )
         return app
 
     mcp.streamable_http_app = get_asgi_app_with_metrics
