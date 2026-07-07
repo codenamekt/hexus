@@ -31,9 +31,14 @@ logger = logging.getLogger(__name__)
 # silently producing vectors that the DB will reject on insert.
 EXPECTED_DIM = 384
 
-# Cap text length to avoid pathological inputs (sentence-transformers
-# truncates at the model max-seq-length, but trimming early keeps the
-# log lines readable when something does go wrong).
+# Cap text length to avoid pathological inputs. This is a coarse
+# character-level guard that runs before the embedder's token-level
+# handling (see embedder.LocalBertEmbedder and issue #7):
+#   - truncate/warn modes: the model still clips at max_seq_length; this
+#     just keeps a 100KB string from reaching it in the first place.
+#   - chunk mode: this bounds how many windows a single entry can produce
+#     (~6000 chars ≈ ~1500 tokens ≈ ~6 windows), capping worst-case encode
+#     cost. Raise it to let chunking cover longer entries.
 MAX_INPUT_CHARS = 6000
 
 

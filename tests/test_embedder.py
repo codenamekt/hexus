@@ -166,6 +166,223 @@ def test_reset_drops_singleton():
 
 
 # ---------------------------------------------------------------------------
+# Long-input handling — issue #7. Fast structural tests with a fake model +
+# tokenizer (no real model load); they exercise the plan/assemble/stats/log
+# paths directly.
+# ---------------------------------------------------------------------------
+
+
+class _FakeTokenizer:
+    """Word-based stand-in for a HF tokenizer: one token per whitespace word,
+    plus 2 special tokens when `add_special_tokens=True`."""
+
+    special = 2
+
+    def __call__(self, texts, add_special_tokens=True, truncation=False, verbose=False):
+        extra = self.special if add_special_tokens else 0
+        return {"input_ids": [list(range(len(t.split()) + extra)) for t in texts]}
+
+    def num_special_tokens_to_add(self, pair=False):
+        return self.special
+
+    def encode(self, text, add_special_tokens=False, verbose=False):
+        extra = self.special if add_special_tokens else 0
+        return list(range(len(text.split()) + extra))
+
+    def decode(self, ids, skip_special_tokens=True):
+        return " ".join(f"w{i}" for i in ids)
+
+
+class _FakeModel:
+    """Stand-in SentenceTransformer. encode() returns a numpy array whose
+    first component is the piece's word count (so tests can tell chunks
+    apart) and second component is 1.0."""
+
+    def __init__(self, max_seq=8):
+        self.max_seq_length = max_seq
+        self.tokenizer = _FakeTokenizer()
+
+    def get_sentence_embedding_dimension(self):
+        return 384
+
+    def encode(self, pieces, convert_to_numpy=True, show_progress_bar=False):
+        import numpy as np
+
+        rows = []
+        for p in pieces:
+            v = [0.0] * 384
+            v[0] = float(len(p.split()))
+            v[1] = 1.0
+            rows.append(v)
+        return np.asarray(rows, dtype="float32")
+
+
+def _embedder_with_model(mode, max_seq=8):
+    from hexus.embedder import LocalBertEmbedder
+
+    e = LocalBertEmbedder(long_text_mode=mode)
+    e._model = _FakeModel(max_seq=max_seq)  # bypass the real load
+    return e
+
+
+def test_long_text_mode_default_is_warn():
+    from hexus.embedder import LocalBertEmbedder, DEFAULT_LONG_TEXT_MODE
+
+    assert LocalBertEmbedder().long_text_mode == DEFAULT_LONG_TEXT_MODE == "warn"
+
+
+def test_long_text_mode_env_override(monkeypatch):
+    from hexus.embedder import get_default_embedder, reset_default_embedder
+
+    monkeypatch.setenv("HEXUS_EMBED_LONG_TEXT_MODE", "chunk")
+    reset_default_embedder()
+    try:
+        assert get_default_embedder().long_text_mode == "chunk"
+    finally:
+        reset_default_embedder()
+
+
+def test_long_text_mode_invalid_falls_back(caplog):
+    import logging
+    from hexus.embedder import LocalBertEmbedder
+
+    with caplog.at_level(logging.WARNING, logger="hexus.embedder"):
+        e = LocalBertEmbedder(long_text_mode="bogus")
+    assert e.long_text_mode == "warn"
+    assert any("invalid" in r.message.lower() for r in caplog.records)
+
+
+def test_short_text_is_passthrough_no_warning(caplog):
+    import logging
+
+    pytest.importorskip("numpy")
+    e = _embedder_with_model("warn", max_seq=8)
+    with caplog.at_level(logging.WARNING, logger="hexus.embedder"):
+        vecs = e.embed(["a b c"])  # 3 words → 5 tokens ≤ 8
+    assert len(vecs) == 1
+    assert vecs[0][0] == 3.0  # raw vector, untouched
+    assert e.stats.texts_over_limit == 0
+    assert not any("exceeds model context" in r.message for r in caplog.records)
+
+
+def test_warn_mode_logs_and_counts(caplog):
+    import logging
+
+    pytest.importorskip("numpy")
+    e = _embedder_with_model("warn", max_seq=8)
+    long_text = " ".join(f"word{i}" for i in range(20))  # 22 tokens > 8
+    with caplog.at_level(logging.WARNING, logger="hexus.embedder"):
+        vecs = e.embed([long_text])
+    assert len(vecs) == 1  # still one vector per input
+    s = e.stats
+    assert s.texts_over_limit == 1
+    assert s.texts_truncated == 1
+    assert s.texts_chunked == 0
+    assert s.tokens_dropped == 22 - 8
+    assert s.max_tokens_seen == 22
+    assert any("exceeds model context" in r.message for r in caplog.records)
+
+
+def test_truncate_mode_is_silent_but_counts(caplog):
+    import logging
+
+    pytest.importorskip("numpy")
+    e = _embedder_with_model("truncate", max_seq=8)
+    long_text = " ".join(f"word{i}" for i in range(20))
+    with caplog.at_level(logging.WARNING, logger="hexus.embedder"):
+        e.embed([long_text])
+    assert e.stats.texts_truncated == 1
+    assert not any("exceeds model context" in r.message for r in caplog.records)
+
+
+def test_chunk_mode_single_normalized_vector():
+    np = pytest.importorskip("numpy")
+    e = _embedder_with_model("chunk", max_seq=8)
+    long_text = " ".join(f"word{i}" for i in range(12))  # 12 tokens > 8
+    vecs = e.embed([long_text])
+
+    assert len(vecs) == 1  # windows collapse to one vector per input
+    assert len(vecs[0]) == 384
+    # Averaged chunk vectors are L2-normalised.
+    assert abs(float(np.linalg.norm(vecs[0])) - 1.0) < 1e-5
+
+    s = e.stats
+    assert s.texts_chunked == 1
+    assert s.chunks_encoded > 1
+    assert s.texts_truncated == 0
+
+
+def test_chunk_mode_short_text_unaffected():
+    pytest.importorskip("numpy")
+    e = _embedder_with_model("chunk", max_seq=8)
+    vecs = e.embed(["a b c"])  # short → no chunking, raw vector
+    assert vecs[0][0] == 3.0
+    assert e.stats.texts_chunked == 0
+
+
+def test_mixed_batch_preserves_order_and_count():
+    pytest.importorskip("numpy")
+    e = _embedder_with_model("chunk", max_seq=8)
+    short = "a b c"
+    long_text = " ".join(f"word{i}" for i in range(12))
+    vecs = e.embed([short, long_text, short])
+    assert len(vecs) == 3  # one vector per input regardless of chunking
+    assert vecs[0][0] == 3.0 and vecs[2][0] == 3.0  # short entries verbatim
+    assert e.stats.texts_chunked == 1
+
+
+def test_reset_stats_zeroes_counters():
+    pytest.importorskip("numpy")
+    e = _embedder_with_model("warn", max_seq=8)
+    e.embed([" ".join(f"w{i}" for i in range(20))])
+    assert e.stats.texts_over_limit == 1
+    e.reset_stats()
+    assert e.stats.texts_over_limit == 0
+    assert e.stats.texts_embedded == 0
+
+
+def test_get_embed_stats_aggregates():
+    pytest.importorskip("numpy")
+    from hexus.embedder import get_embed_stats, reset_default_embedder
+
+    reset_default_embedder()
+    try:
+        e = _embedder_with_model("warn", max_seq=8)
+        # Splice our fake-backed embedder into the singleton registry so the
+        # module-level aggregator can see it.
+        import hexus.embedder as mod
+
+        with mod._singleton_lock:
+            mod._singletons[("fake", None, "cpu", "warn")] = e
+        e.embed([" ".join(f"w{i}" for i in range(20))])
+        assert get_embed_stats().texts_over_limit >= 1
+    finally:
+        reset_default_embedder()
+
+
+def test_no_tokenizer_falls_back_gracefully():
+    """A model without a tokenizer (or max_seq_length) skips the length guard
+    entirely and behaves exactly like the pre-#7 path."""
+    pytest.importorskip("numpy")
+    from hexus.embedder import LocalBertEmbedder
+
+    class _NoTokModel:
+        def get_sentence_embedding_dimension(self):
+            return 384
+
+        def encode(self, pieces, convert_to_numpy=True, show_progress_bar=False):
+            import numpy as np
+
+            return np.asarray([[0.0] * 384 for _ in pieces], dtype="float32")
+
+    e = LocalBertEmbedder(long_text_mode="chunk")
+    e._model = _NoTokModel()
+    vecs = e.embed(["anything at all", "another"])
+    assert len(vecs) == 2
+    assert e.stats.texts_over_limit == 0  # guard skipped, nothing counted
+
+
+# ---------------------------------------------------------------------------
 # Real-model tests — skipped by default if the dep is unavailable or
 # the operator wants a fast CI run.
 # ---------------------------------------------------------------------------
@@ -345,9 +562,10 @@ def test_embed_base_url_dispatches_to_http(monkeypatch):
 
 
 def test_embed_truncates_long_text():
-    """Text longer than MAX_INPUT_CHARS is silently truncated (the
-    embedder would truncate anyway, but doing it here keeps log lines
-    sane and avoids the model choking on a 100KB string)."""
+    """Text longer than MAX_INPUT_CHARS is clipped at the embed.py boundary
+    before it reaches the embedder. This is the coarse char-level guard; the
+    token-level handling (warn/chunk/truncate + stats) is exercised in the
+    LocalBertEmbedder long-input tests above."""
     from hexus import embed as embed_fn
     from hexus.embed import MAX_INPUT_CHARS
 
