@@ -41,8 +41,8 @@ jobs:
     # Build the wheel and confirm every subpackage is actually shipped in it.
     # Guards against the class of bug where a subpackage without __init__.py
     # is silently dropped by find_packages, producing a wheel that ImportErrors
-    # on `import hexus`. Uses --no-deps + importlib.find_spec so it stays fast
-    # (no torch/psycopg install needed to verify packaging completeness).
+    # on `import hexus`. Inspects the wheel's zip contents directly (no install,
+    # no torch/psycopg) so it stays fast and dependency-free.
     needs: lint
     runs-on: ubuntu-latest
     steps:
@@ -59,28 +59,36 @@ jobs:
           python -m pip install --upgrade build
           python -m build
 
-      - name: Install wheel (no deps) and verify all subpackages are packaged
+      - name: Verify all subpackages are present in the built wheel
         run: |
-          python -m pip install --no-deps dist/*.whl
           python - <<'PY'
-          import importlib.util as u
-          modules = [
-              "hexus",
-              "hexus.embed",
-              "hexus.store",
-              "hexus.embedder",
-              "hexus.writer",
-              "hexus.pipeline.router",
-              "hexus.ccr.cache",
-              "hexus.webhook.dispatcher",
-              "hexus.entity_extractor",
-              "mcp_server.cli",
-              "mcp_server.import_cli",
+          import glob, zipfile
+          whl = sorted(glob.glob("dist/*.whl"))[-1]
+          names = set(zipfile.ZipFile(whl).namelist())
+          required = [
+              "hexus/__init__.py",
+              "hexus/embed.py",
+              "hexus/store.py",
+              "hexus/embedder.py",
+              "hexus/writer.py",
+              "hexus/entity_extractor.py",
+              "hexus/pipeline/__init__.py",
+              "hexus/pipeline/router.py",
+              "hexus/ccr/__init__.py",
+              "hexus/ccr/cache.py",
+              "hexus/webhook/__init__.py",
+              "hexus/webhook/dispatcher.py",
+              "mcp_server/__init__.py",
+              "mcp_server/cli.py",
+              "mcp_server/import_cli.py",
           ]
-          missing = [m for m in modules if u.find_spec(m) is None]
-          assert not missing, f"modules missing from the built wheel: {missing}"
-          print(f"OK: all {len(modules)} modules present in the installed wheel")
+          missing = [r for r in required if r not in names]
+          assert not missing, f"{whl} is missing: {missing}"
+          print(f"OK: {whl} contains all {len(required)} required modules")
           PY
+
+      - name: Wheel installs cleanly (no deps)
+        run: python -m pip install --no-deps dist/*.whl
 
   build-and-test:
     needs: lint
