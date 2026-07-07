@@ -1,6 +1,6 @@
 """mcp_server — Model Context Protocol server for hexus.
 
-Forked from andreab67/hermes-hexus (BSD-3-Clause).
+Forked from andreab67/hermes-memory-pgvector (BSD-3-Clause).
 
 Exposes the same Postgres + hexus memory store that the Hermes plugin
 uses to any MCP client (Claude Desktop, Cursor, custom agents) as a set

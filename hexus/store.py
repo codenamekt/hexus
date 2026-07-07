@@ -1,6 +1,6 @@
 """store.py — Postgres ops for the hexus memory plugin.
 #
-# Forked from andreab67/hermes-hexus (BSD-3-Clause).
+# Forked from andreab67/hermes-memory-pgvector (BSD-3-Clause).
 #
 # Wraps psycopg3 + psycopg_pool. Mirrors hermes-agent's native built-in
 # memory model (`memory` tool's add/replace/remove on targets 'memory' /
@@ -23,9 +23,10 @@ import logging
 import math
 import os
 import threading
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import psycopg
 from psycopg.rows import dict_row
@@ -65,6 +66,273 @@ def get_cross_encoder() -> Any:
                     "cross-encoder/ms-marco-MiniLM-L-6-v2"
                 )
     return _cross_encoder_model
+
+
+# ---------------------------------------------------------------------------
+# Long-document reranking — issue #7 (query-side companion to the write-side
+# handling in embedder.py).
+#
+# The cross-encoder scores a (query, doc) *pair* jointly and truncates the
+# pair at its own context window (ms-marco-MiniLM-L-6-v2 → 512 tokens). A long
+# `compressed`/`content` doc therefore loses its tail before scoring — the
+# same silent-truncation class as the bi-encoder, but a third time and on the
+# read path. Unlike the bi-encoder we can't average embeddings (there is no
+# per-doc embedding); the established fix is BERT-MaxP (Dai & Callan 2019):
+# split the doc into passages, score (query, passage) for each, take the max.
+#
+#   truncate — score the truncated pair (old behaviour). Silent; still counted.
+#   warn     — same score, plus a throttled warning + stats. Default: changes
+#              no ranking, only adds cheap tokenisation on the read path.
+#   maxp     — split over-long docs into passages, score each, keep the max.
+#              Opt-in: it issues extra cross-encoder predictions per long doc.
+RERANK_MODE_TRUNCATE = "truncate"
+RERANK_MODE_WARN = "warn"
+RERANK_MODE_MAXP = "maxp"
+VALID_RERANK_MODES = (RERANK_MODE_TRUNCATE, RERANK_MODE_WARN, RERANK_MODE_MAXP)
+DEFAULT_RERANK_MODE = RERANK_MODE_WARN
+RERANK_MODE_ENV = "HEXUS_RERANK_LONG_DOC_MODE"
+
+# Token overlap between adjacent passages in maxp mode.
+RERANK_PASSAGE_OVERLAP_TOKENS = 16
+# Hard cap on passages scored per doc, to bound read-path latency. If a doc
+# needs more, the tail is not scored — this is recorded in the stats
+# (docs_capped / tokens_dropped) rather than silently ignored.
+RERANK_MAX_PASSAGES = 8
+# Fallback context window if the model doesn't report one.
+RERANK_DEFAULT_MAX_LEN = 512
+
+
+@dataclass
+class RerankStats:
+    """Per-process counters for long-document reranking (issue #7).
+
+    Populated in every mode so operators can see how often reranked docs
+    exceed the cross-encoder window even when logging is quiet. Read via
+    ``get_rerank_stats()``; zero via ``reset_rerank_stats()``.
+    """
+
+    docs_reranked: int = 0  # (query, doc) pairs handed to rerank
+    docs_over_limit: int = 0  # docs whose tokens exceed the doc budget
+    docs_truncated: int = 0  # over-limit docs scored truncated (truncate/warn)
+    docs_split: int = 0  # over-limit docs split into passages (maxp)
+    docs_capped: int = 0  # split docs that hit RERANK_MAX_PASSAGES (tail unscored)
+    passages_scored: int = 0  # total passage predictions produced by maxp
+    tokens_dropped: int = 0  # approx doc tokens never scored (truncate + capped)
+    max_tokens_seen: int = 0  # largest single-doc token count observed
+
+    def as_dict(self) -> Dict[str, int]:
+        return {
+            "docs_reranked": self.docs_reranked,
+            "docs_over_limit": self.docs_over_limit,
+            "docs_truncated": self.docs_truncated,
+            "docs_split": self.docs_split,
+            "docs_capped": self.docs_capped,
+            "passages_scored": self.passages_scored,
+            "tokens_dropped": self.tokens_dropped,
+            "max_tokens_seen": self.max_tokens_seen,
+        }
+
+
+_rerank_stats = RerankStats()
+_rerank_stats_lock = threading.Lock()
+_rerank_over_limit_total = 0  # throttle counter for warn-mode logging
+
+
+def get_rerank_stats() -> RerankStats:
+    """A snapshot copy of the long-document rerank counters (issue #7)."""
+    with _rerank_stats_lock:
+        return replace(_rerank_stats)
+
+
+def reset_rerank_stats() -> None:
+    """Zero the rerank counters (test/measurement helper)."""
+    global _rerank_stats, _rerank_over_limit_total
+    with _rerank_stats_lock:
+        _rerank_stats = RerankStats()
+        _rerank_over_limit_total = 0
+
+
+def _resolve_rerank_mode(mode: Optional[str]) -> str:
+    raw = mode or os.environ.get(RERANK_MODE_ENV) or DEFAULT_RERANK_MODE
+    candidate = raw.strip().lower()
+    if candidate not in VALID_RERANK_MODES:
+        logger.warning(
+            "invalid %s=%r; falling back to %r (valid: %s)",
+            RERANK_MODE_ENV,
+            candidate,
+            DEFAULT_RERANK_MODE,
+            ", ".join(VALID_RERANK_MODES),
+        )
+        return DEFAULT_RERANK_MODE
+    return candidate
+
+
+def _cross_encoder_max_len(model) -> int:
+    """The cross-encoder's max pair length, best-effort.
+
+    Prefer the model's own `max_length`; fall back to the tokenizer's
+    model_max_length (ignoring HF's unset-sentinel), then a constant.
+    """
+    ml = getattr(model, "max_length", None)
+    if ml:
+        try:
+            return int(ml)
+        except (TypeError, ValueError):
+            pass
+    tok = getattr(model, "tokenizer", None)
+    mm = getattr(tok, "model_max_length", None) if tok is not None else None
+    if mm and mm < 100_000:  # HF uses ~1e30 when unset
+        try:
+            return int(mm)
+        except (TypeError, ValueError):
+            pass
+    return RERANK_DEFAULT_MAX_LEN
+
+
+def _split_doc_for_rerank(doc: str, tokenizer, budget: int) -> Tuple[List[str], int]:
+    """Split `doc` into ≤RERANK_MAX_PASSAGES overlapping token windows.
+
+    Returns (passages, tokens_unscored) where tokens_unscored is the tail
+    dropped by the passage cap (0 if the whole doc fit within the cap).
+    """
+    try:
+        ids = tokenizer.encode(doc, add_special_tokens=False, verbose=False)
+    except Exception:  # noqa: BLE001
+        return [doc], 0
+    if len(ids) <= budget:
+        return [doc], 0
+
+    overlap = min(RERANK_PASSAGE_OVERLAP_TOKENS, budget - 1) if budget > 1 else 0
+    stride = max(1, budget - overlap)
+    passages: List[str] = []
+    covered = 0
+    for start in range(0, len(ids), stride):
+        window = ids[start : start + budget]
+        if not window:
+            break
+        text = tokenizer.decode(window, skip_special_tokens=True).strip()
+        if text:
+            passages.append(text)
+        covered = start + len(window)
+        if len(passages) >= RERANK_MAX_PASSAGES or start + budget >= len(ids):
+            break
+    tokens_unscored = max(0, len(ids) - covered)
+    return (passages or [doc]), tokens_unscored
+
+
+def rerank_scores(
+    model, query_text: Optional[str], docs: List[str], *, mode: Optional[str] = None
+) -> List[float]:
+    """Score each (query, doc) with the cross-encoder, one score per doc.
+
+    Handles docs longer than the cross-encoder window per `mode`
+    (truncate/warn/maxp). This is a drop-in replacement for the old
+    ``model.predict([[query, doc], ...])`` — same length output, same order.
+    """
+    global _rerank_over_limit_total
+    if not docs:
+        return []
+    resolved = _resolve_rerank_mode(mode)
+    query_text = query_text or ""
+    tokenizer = getattr(model, "tokenizer", None)
+
+    # Doc budget = window minus the query and the pair's special tokens. If we
+    # can't tokenize, skip the guard and let the model truncate (old path).
+    budget: Optional[int] = None
+    if tokenizer is not None:
+        try:
+            max_len = _cross_encoder_max_len(model)
+            q_len = len(
+                tokenizer.encode(query_text, add_special_tokens=False, verbose=False)
+            )
+            try:
+                special = tokenizer.num_special_tokens_to_add(pair=True)
+            except Exception:  # noqa: BLE001
+                special = 3
+            budget = max(1, max_len - q_len - special)
+        except Exception as exc:  # noqa: BLE001 — best-effort guard
+            logger.debug("rerank length guard unavailable (%s); truncating", exc)
+            budget = None
+
+    pairs: List[List[str]] = []
+    plan: List[Tuple[int, int]] = []  # (start, count) into pairs, per doc
+    for doc in docs:
+        doc = doc or ""
+        with _rerank_stats_lock:
+            _rerank_stats.docs_reranked += 1
+
+        if budget is None:
+            pairs.append([query_text, doc])
+            plan.append((len(pairs) - 1, 1))
+            continue
+
+        try:
+            d_len = len(tokenizer.encode(doc, add_special_tokens=False, verbose=False))
+        except Exception:  # noqa: BLE001
+            d_len = 0
+        if d_len <= budget:
+            pairs.append([query_text, doc])
+            plan.append((len(pairs) - 1, 1))
+            continue
+
+        # Over the doc budget — count it in every mode.
+        with _rerank_stats_lock:
+            _rerank_stats.docs_over_limit += 1
+            if d_len > _rerank_stats.max_tokens_seen:
+                _rerank_stats.max_tokens_seen = d_len
+            _rerank_over_limit_total += 1
+            over_count = _rerank_over_limit_total
+
+        if resolved == RERANK_MODE_MAXP:
+            passages, tail = _split_doc_for_rerank(doc, tokenizer, budget)
+            if len(passages) > 1:
+                start = len(pairs)
+                pairs.extend([query_text, p] for p in passages)
+                plan.append((start, len(passages)))
+                with _rerank_stats_lock:
+                    _rerank_stats.docs_split += 1
+                    _rerank_stats.passages_scored += len(passages)
+                    if tail > 0:
+                        _rerank_stats.docs_capped += 1
+                        _rerank_stats.tokens_dropped += tail
+                if tail > 0:
+                    logger.debug(
+                        "rerank: doc %d tokens split into %d passages, "
+                        "~%d tail tokens unscored (passage cap)",
+                        d_len,
+                        len(passages),
+                        tail,
+                    )
+                continue
+            # Couldn't split — fall through to truncate.
+
+        with _rerank_stats_lock:
+            _rerank_stats.docs_truncated += 1
+            _rerank_stats.tokens_dropped += d_len - budget
+        pairs.append([query_text, doc])
+        plan.append((len(pairs) - 1, 1))
+        if resolved == RERANK_MODE_WARN and (over_count == 1 or over_count % 100 == 0):
+            logger.warning(
+                "hexus rerank: doc exceeds cross-encoder context "
+                "(%d tokens > %d budget) — scoring truncated; ~%d tokens "
+                "dropped. %d over-limit doc(s) so far this process (see "
+                "get_rerank_stats()). Set %s=maxp to score full docs, or "
+                "=truncate to silence.",
+                d_len,
+                budget,
+                d_len - budget,
+                over_count,
+                RERANK_MODE_ENV,
+            )
+
+    raw = model.predict(pairs)
+    scores: List[float] = []
+    for start, count in plan:
+        if count == 1:
+            scores.append(float(raw[start]))
+        else:
+            scores.append(float(max(raw[start : start + count])))
+    return scores
 
 
 class MemoryStore:
@@ -837,13 +1105,10 @@ class MemoryStore:
 
         if rerank and query_text and rows:
             model = get_cross_encoder()
-            pairs = [
-                [query_text, r.get("compressed") or r.get("content")] for r in rows
-            ]
-            rerank_scores = model.predict(pairs)
-            for r, rerank_score in zip(rows, rerank_scores):
-                r["rerank_score"] = float(rerank_score)
-                r["score"] = r["rerank_score"]
+            docs = [r.get("compressed") or r.get("content") for r in rows]
+            for r, rerank_score in zip(rows, rerank_scores(model, query_text, docs)):
+                r["rerank_score"] = rerank_score
+                r["score"] = rerank_score
 
         if (
             self._vector_precision == "binary"
@@ -1010,13 +1275,10 @@ class MemoryStore:
 
         if rerank and rows:
             model = get_cross_encoder()
-            pairs = [
-                [query_text, r.get("compressed") or r.get("content")] for r in rows
-            ]
-            rerank_scores = model.predict(pairs)
-            for r, rerank_score in zip(rows, rerank_scores):
-                r["rerank_score"] = float(rerank_score)
-                r["score"] = r["rerank_score"]
+            docs = [r.get("compressed") or r.get("content") for r in rows]
+            for r, rerank_score in zip(rows, rerank_scores(model, query_text, docs)):
+                r["rerank_score"] = rerank_score
+                r["score"] = rerank_score
 
         rows = sorted(rows, key=lambda r: r.get("score", 0.0), reverse=True)
         rows = rows[:limit]
