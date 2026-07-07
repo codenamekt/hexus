@@ -1,6 +1,6 @@
 """embed.py — embedding client for the hexus memory plugin.
 #
-# Forked from andreab67/hermes-hexus (BSD-3-Clause).
+# Forked from andreab67/hermes-memory-pgvector (BSD-3-Clause).
 #
 # Originally a module-level `embed(text, *, base_url, model)` that posted
 # to an OpenAI-compatible /v1/embeddings or Ollama /api/embed endpoint

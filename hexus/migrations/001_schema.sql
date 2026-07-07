@@ -1,6 +1,6 @@
 -- 001_schema.sql — hexus memory plugin schema.
 --
--- Forked from andreab67/hermes-hexus (BSD-3-Clause).
+-- Forked from andreab67/hermes-memory-pgvector (BSD-3-Clause).
 --
 -- TWO tables, both in the existing hermes_memory database:
 --   memory_entries  → mirrors hermes-agent's built-in `memory` tool

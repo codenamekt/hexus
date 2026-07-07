@@ -1,6 +1,6 @@
 """mcp_server.cli — `hexus-mcp` console script entry point.
 
-Forked from andreab67/hermes-hexus (BSD-3-Clause).
+Forked from andreab67/hermes-memory-pgvector (BSD-3-Clause).
 
 Usage:
   hexus-mcp serve --transport stdio --dsn "dbname=... user=... host=..."
