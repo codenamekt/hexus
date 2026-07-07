@@ -387,7 +387,11 @@ class LocalBertEmbedder:
             block = raw[start : start + count]
             w = np.asarray(weights, dtype=block.dtype)
             total = float(w.sum())
-            w = (w / total) if total > 0 else np.full(count, 1.0 / count, dtype=block.dtype)
+            w = (
+                (w / total)
+                if total > 0
+                else np.full(count, 1.0 / count, dtype=block.dtype)
+            )
             avg = (block * w[:, None]).sum(axis=0)
             norm = float(np.linalg.norm(avg))
             if norm > 0:
@@ -423,9 +427,7 @@ class LocalBertEmbedder:
             )
             return None
 
-    def _chunk_text(
-        self, text: str, tokenizer, max_seq: int
-    ) -> List[Tuple[str, int]]:
+    def _chunk_text(self, text: str, tokenizer, max_seq: int) -> List[Tuple[str, int]]:
         """Split `text` into overlapping token windows → [(chunk_text, n_tokens)].
 
         We reserve room for the special tokens the tokenizer re-adds when each
