@@ -34,6 +34,51 @@ jobs:
         with:
           args: 'format --check'
 
+  packaging:
+    # Build the wheel and confirm every subpackage is actually shipped in it.
+    # Guards against the class of bug where a subpackage without __init__.py
+    # is silently dropped by find_packages, producing a wheel that ImportErrors
+    # on `import hexus`. Uses --no-deps + importlib.find_spec so it stays fast
+    # (no torch/psycopg install needed to verify packaging completeness).
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Build wheel + sdist
+        run: |
+          python -m pip install --upgrade build
+          python -m build
+
+      - name: Install wheel (no deps) and verify all subpackages are packaged
+        run: |
+          python -m pip install --no-deps dist/*.whl
+          python - <<'PY'
+          import importlib.util as u
+          modules = [
+              "hexus",
+              "hexus.embed",
+              "hexus.store",
+              "hexus.embedder",
+              "hexus.writer",
+              "hexus.pipeline.router",
+              "hexus.ccr.cache",
+              "hexus.webhook.dispatcher",
+              "hexus.entity_extractor",
+              "mcp_server.cli",
+              "mcp_server.import_cli",
+          ]
+          missing = [m for m in modules if u.find_spec(m) is None]
+          assert not missing, f"modules missing from the built wheel: {missing}"
+          print(f"OK: all {len(modules)} modules present in the installed wheel")
+          PY
+
   build-and-test:
     needs: lint
     runs-on: ubuntu-latest
@@ -63,7 +108,7 @@ jobs:
           docker push ghcr.io/${{ github.repository }}:${{ github.ref_name }}
 
   release-pypi:
-    needs: [lint, build-and-test]
+    needs: [lint, packaging, build-and-test]
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
