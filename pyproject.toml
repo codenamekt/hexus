@@ -55,6 +55,10 @@ dependencies = [
     "PyYAML>=6.0,<7",
     "sentence-transformers>=2.7.0,<4",
     "numpy>=1.24,<3",
+    # Used by hexus.webhook.dispatcher (imported whenever webhook_url is
+    # configured). Previously arrived only transitively via
+    # sentence-transformers -> huggingface_hub; declare it explicitly.
+    "requests>=2.28,<3",
 ]
 
 [project.optional-dependencies]
