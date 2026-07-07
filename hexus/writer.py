@@ -1,6 +1,6 @@
 """writer.py — async write queue for the hexus memory plugin.
 #
-# Forked from andreab67/hermes-hexus (BSD-3-Clause).
+# Forked from andreab67/hermes-memory-pgvector (BSD-3-Clause).
 #
 # Decouples `on_memory_write` from the (potentially slow) embed + INSERT
 # path. Built-in memory tool fires the hook → we enqueue → background

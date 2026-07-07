@@ -1,6 +1,6 @@
 """tests/test_mcp_server.py — tests for the MCP tool surface.
 
-Forked from andreab67/hermes-hexus (BSD-3-Clause).
+Forked from andreab67/hermes-memory-pgvector (BSD-3-Clause).
 
 Two layers:
   1. **Tool-function tests** — exercise each pure function in
