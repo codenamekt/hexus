@@ -76,6 +76,10 @@ services:
     environment:
       CMD_PROFILE: mcp
       PYTHONPATH: /app            # the COPY'd source dirs (pgvector, mcp_server) live here
+      # The mcp entrypoint waits on PG_TEST_HOST before starting; point it at
+      # the `pg` service (matches the test service) so it isn't left waiting on
+      # the homelab-db default.
+      PG_TEST_HOST: pg
       HEXUS_TRANSPORT: http
       HEXUS_DSN: "dbname=hermes_test user=postgres password=${HEXUS_DB_PASS:-postgres} host=pg"
       HEXUS_DB_PASS: ${HEXUS_DB_PASS:-postgres}
