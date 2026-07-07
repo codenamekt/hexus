@@ -153,9 +153,8 @@ def reset_rerank_stats() -> None:
 
 
 def _resolve_rerank_mode(mode: Optional[str]) -> str:
-    candidate = (
-        mode or os.environ.get(RERANK_MODE_ENV) or DEFAULT_RERANK_MODE
-    ).strip().lower()
+    raw = mode or os.environ.get(RERANK_MODE_ENV) or DEFAULT_RERANK_MODE
+    candidate = raw.strip().lower()
     if candidate not in VALID_RERANK_MODES:
         logger.warning(
             "invalid %s=%r; falling back to %r (valid: %s)",
@@ -190,9 +189,7 @@ def _cross_encoder_max_len(model) -> int:
     return RERANK_DEFAULT_MAX_LEN
 
 
-def _split_doc_for_rerank(
-    doc: str, tokenizer, budget: int
-) -> Tuple[List[str], int]:
+def _split_doc_for_rerank(doc: str, tokenizer, budget: int) -> Tuple[List[str], int]:
     """Split `doc` into ≤RERANK_MAX_PASSAGES overlapping token windows.
 
     Returns (passages, tokens_unscored) where tokens_unscored is the tail
@@ -245,7 +242,9 @@ def rerank_scores(
     if tokenizer is not None:
         try:
             max_len = _cross_encoder_max_len(model)
-            q_len = len(tokenizer.encode(query_text, add_special_tokens=False, verbose=False))
+            q_len = len(
+                tokenizer.encode(query_text, add_special_tokens=False, verbose=False)
+            )
             try:
                 special = tokenizer.num_special_tokens_to_add(pair=True)
             except Exception:  # noqa: BLE001
