@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import logging
 import os
+from contextvars import ContextVar
 from typing import Any, Dict, List, Optional
 
 from hexus.embed import EmbeddingError, embed
@@ -101,6 +102,89 @@ def _coerce_agent_identity(args: Dict[str, Any]) -> str:
     return default_agent_identity()
 
 
+# ---------------------------------------------------------------------------
+# Identity resolution for multi-agent isolation (issue #19).
+#
+# The *authoritative* caller identity comes from the transport. On the HTTP
+# transport, server.py derives it from the authenticated `X-Hermes-Session-Key`
+# header and publishes it in the `current_caller` ContextVar (below) for the
+# duration of the request. When present it wins over the client-chosen
+# `agent_identity` arg for writes/mutations, which stops an authenticated
+# client from acting as another agent. When absent (stdio clients,
+# direct/in-process calls) we fall back to the arg / env default and preserve
+# the pre-#19 behavior.
+# ---------------------------------------------------------------------------
+
+_CALLER_KEY = "_caller_identity"
+
+# Set per-request by the HTTP transport (server.py) from the authenticated
+# `X-Hermes-Session-Key` header. It is a ContextVar rather than a tool arg so
+# the ~19 tool wrappers don't each have to thread it through, and — crucially —
+# so a client cannot set it: the MCP tool schema has no such parameter, and the
+# only writer is the server's request middleware. stdio / in-process callers
+# leave it None and keep the pre-#19 behavior. An explicit `_caller_identity`
+# in args (in-process callers, tests) still takes precedence over the var.
+current_caller: ContextVar[Optional[str]] = ContextVar(
+    "hexus_current_caller", default=None
+)
+
+
+def _caller_identity(args: Dict[str, Any]) -> Optional[str]:
+    """Server-derived transport identity, or None when none was set.
+
+    Precedence: explicit `_caller_identity` in args (trusted in-process
+    callers) → the per-request ContextVar (HTTP transport) → None.
+    """
+    c = args.get(_CALLER_KEY)
+    if isinstance(c, str) and c.strip():
+        return c.strip()
+    v = current_caller.get()
+    if isinstance(v, str) and v.strip():
+        return v.strip()
+    return None
+
+
+def _write_identity(args: Dict[str, Any]) -> str:
+    """Scope an agent writes into. Transport identity is authoritative; else
+    fall back to the explicit arg, then the env default."""
+    return _caller_identity(args) or _coerce_agent_identity(args)
+
+
+def _scope_identity(args: Dict[str, Any]) -> Optional[str]:
+    """Identity to scope a by-id mutation/read to, or None to stay unscoped.
+
+    Transport identity wins; otherwise an explicit non-empty `agent_identity`
+    arg. Returns None when neither is present so direct/stdio callers keep the
+    unscoped behavior, while the networked fleet (which always carries a
+    transport identity) gets cross-agent reads/mutations blocked.
+    """
+    caller = _caller_identity(args)
+    if caller is not None:
+        return caller
+    a = args.get("agent_identity")
+    if isinstance(a, str) and a.strip():
+        return a.strip()
+    return None
+
+
+def _read_identity(store: MemoryStore, args: Dict[str, Any]) -> Optional[str]:
+    """Effective agent_identity filter for a read/search, resolving the
+    empty-identity asymmetry (issue #19 item C) consistently via the store's
+    isolation policy:
+
+    - explicit non-empty `agent_identity` arg → scope to it (shared mode only;
+      in strict mode reads are always confined to the caller)
+    - empty/None → 'strict': the caller's own identity; 'shared': None (search
+      every agent — the trusted-fleet default).
+    """
+    if getattr(store, "isolation", "shared") == "strict":
+        return _scope_identity(args) or default_agent_identity()
+    a = args.get("agent_identity")
+    if isinstance(a, str) and a.strip():
+        return a.strip()
+    return None
+
+
 def _coerce_target(args: Dict[str, Any]) -> Optional[str]:
     """target ∈ {'memory', 'user', None}. Anything else is rejected.
 
@@ -136,7 +220,7 @@ def memory_retain(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
             raise ValueError(f"contents[{i}] must be a non-empty string")
 
     target = _coerce_target(args) or "memory"
-    agent = _coerce_agent_identity(args)
+    agent = _write_identity(args)
     doc_type = args.get("doc_type", "memory")
     source_url = args.get("source_url")
     metadata_in = args.get("metadata")
@@ -229,9 +313,7 @@ def memory_recall(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
     if top_k > 100:
         top_k = 100
 
-    agent = args.get("agent_identity")
-    if isinstance(agent, str) and agent.strip() == "":
-        agent = None
+    agent = _read_identity(store, args)
 
     target = _coerce_target(args)
     min_similarity = float(args.get("min_similarity", 0.0))
@@ -286,9 +368,7 @@ def memory_search(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
 
     Returns: {"count": N, "rows": [...], "limit": L, "offset": O}
     """
-    agent = args.get("agent_identity")
-    if agent is None or (isinstance(agent, str) and not agent.strip()):
-        agent = _coerce_agent_identity(args)
+    agent = _read_identity(store, args)
     target = _coerce_target(args)
     limit = int(args.get("limit", 20))
     if limit < 1:
@@ -326,7 +406,7 @@ def memory_forget(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
             "would_delete_id": entry_id,
             "hint": "pass confirm=true to actually delete",
         }
-    agent = args.get("agent_identity") or _coerce_agent_identity(args)
+    agent = _write_identity(args)
     with store._get_pool().connection() as conn:  # noqa: SLF001 — admin path
         with conn.cursor() as cur:
             cur.execute(
@@ -440,7 +520,7 @@ def memory_append_turn(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, An
     content = args.get("content")
     if not isinstance(content, str) or not content.strip():
         raise ValueError("content must be a non-empty string")
-    agent = _coerce_agent_identity(args)
+    agent = _write_identity(args)
     metadata = args.get("metadata")
     if metadata is not None and not isinstance(metadata, dict):
         raise ValueError("metadata must be a dict or None")
@@ -471,9 +551,7 @@ def memory_count(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
 
     Returns: {"memory_entries": N, "conversations": M, "agent_identity": ..., "target": ...}
     """
-    agent = args.get("agent_identity")
-    if agent is None or (isinstance(agent, str) and not agent.strip()):
-        agent = _coerce_agent_identity(args)
+    agent = _read_identity(store, args)
     target = _coerce_target(args)
     session_id = args.get("session_id")
     if isinstance(session_id, str) and session_id.strip() == "":
@@ -543,9 +621,7 @@ def memory_hybrid_search(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, 
     vector_weight = float(args.get("vector_weight", 0.7))
     text_weight = float(args.get("text_weight", 0.3))
 
-    agent = args.get("agent_identity")
-    if isinstance(agent, str) and agent.strip() == "":
-        agent = None
+    agent = _read_identity(store, args)
 
     target = _coerce_target(args)
     min_similarity = float(args.get("min_similarity", 0.0))
@@ -687,11 +763,7 @@ def memory_record_delegation(
 
     result = args.get("result") or ""
 
-    agent = args.get("agent_identity")
-    if isinstance(agent, str) and agent.strip() == "":
-        agent = "default"
-    elif not agent:
-        agent = "default"
+    agent = _write_identity(args)
 
     metadata = args.get("metadata") or {}
 
@@ -874,7 +946,7 @@ def memory_confirm(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
     except (TypeError, ValueError):
         raise ValueError("id must be an integer")
 
-    success = store.confirm_entry(entry_id)
+    success = store.confirm_entry(entry_id, _scope_identity(args))
     return {"id": entry_id, "success": success}
 
 
@@ -888,7 +960,7 @@ def memory_reject(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
     except (TypeError, ValueError):
         raise ValueError("id must be an integer")
 
-    success = store.reject_entry(entry_id)
+    success = store.reject_entry(entry_id, _scope_identity(args))
     return {"id": entry_id, "success": success}
 
 
@@ -906,6 +978,7 @@ def memory_summarize_session(
     return store.summarize_session(
         session_id=session_id,
         limit=limit,
+        agent_identity=_scope_identity(args),
     )
 
 
@@ -923,7 +996,7 @@ def memory_retrieve(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
     except (TypeError, ValueError):
         raise ValueError("id must be an integer")
 
-    content = store.fetch_full(entry_id)
+    content = store.fetch_full(entry_id, _scope_identity(args))
     if content is None:
         return {"id": entry_id, "found": False, "content": None}
     return {"id": entry_id, "found": True, "content": content}

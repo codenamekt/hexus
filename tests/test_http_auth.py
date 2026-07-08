@@ -105,3 +105,132 @@ def test_lifespan_scope_passes_through_without_auth():
 
     asyncio.run(app({"type": "lifespan"}, receive, send))
     assert downstream.calls == ["lifespan"]  # forwarded, no 401
+
+
+# -----------------------------------------------------------------------
+# Server-derived caller identity (issue #19 item A)
+# -----------------------------------------------------------------------
+
+from mcp_server.server import _wrap_with_identity  # noqa: E402
+from mcp_server import tools  # noqa: E402
+
+
+def _identity_scope(session_key=None):
+    headers = []
+    if session_key is not None:
+        headers.append((b"x-hermes-session-key", session_key.encode("latin-1")))
+    return {"type": "http", "headers": headers, "method": "POST", "path": "/mcp"}
+
+
+def test_identity_header_published_to_contextvar():
+    """The X-Hermes-Session-Key header is visible via tools.current_caller for
+    the duration of the request, and reset afterwards."""
+    seen = {}
+
+    async def app(scope, receive, send):
+        seen["caller"] = tools.current_caller.get()
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"ok"})
+
+    wrapped = _wrap_with_identity(app)
+    _drive(wrapped, _identity_scope(session_key="marketing"))
+    assert seen["caller"] == "marketing"
+    # No leak across requests.
+    assert tools.current_caller.get() is None
+
+
+def test_identity_absent_header_is_none():
+    seen = {}
+
+    async def app(scope, receive, send):
+        seen["caller"] = tools.current_caller.get()
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"ok"})
+
+    wrapped = _wrap_with_identity(app)
+    _drive(wrapped, _identity_scope(session_key=None))
+    assert seen["caller"] is None
+
+
+def test_identity_contextvar_beats_client_arg_for_writes():
+    """When a transport identity is set, it is authoritative for writes even
+    if the client passes a different agent_identity arg."""
+    token = tools.current_caller.set("real-agent")
+    try:
+        assert tools._write_identity({"agent_identity": "spoofed"}) == "real-agent"
+        assert tools._scope_identity({"agent_identity": "spoofed"}) == "real-agent"
+    finally:
+        tools.current_caller.reset(token)
+
+
+def test_write_identity_falls_back_to_arg_then_env(monkeypatch):
+    """Without a transport identity, writes fall back to the arg, then env."""
+    assert tools.current_caller.get() is None
+    assert tools._write_identity({"agent_identity": "sales"}) == "sales"
+    monkeypatch.setenv("HEXUS_AGENT_IDENTITY", "fallback")
+    assert tools._write_identity({}) == "fallback"
+
+
+def test_scope_identity_none_when_nothing_known():
+    """By-id ops stay unscoped for direct/stdio callers with no identity."""
+    assert tools.current_caller.get() is None
+    assert tools._scope_identity({}) is None
+
+
+class _FakeStore:
+    def __init__(self, isolation):
+        self.isolation = isolation
+
+
+def test_read_identity_shared_empty_means_all_agents():
+    store = _FakeStore("shared")
+    assert tools._read_identity(store, {"agent_identity": ""}) is None
+    # Explicit arg is honored as a filter.
+    assert tools._read_identity(store, {"agent_identity": "sales"}) == "sales"
+
+
+def test_read_identity_strict_confines_to_caller(monkeypatch):
+    store = _FakeStore("strict")
+    monkeypatch.setenv("HEXUS_AGENT_IDENTITY", "me")
+    # Empty → caller (env default here).
+    assert tools._read_identity(store, {"agent_identity": ""}) == "me"
+    # Even an explicit other-agent arg is overridden by the caller identity.
+    token = tools.current_caller.set("real")
+    try:
+        assert tools._read_identity(store, {"agent_identity": "other"}) == "real"
+    finally:
+        tools.current_caller.reset(token)
+
+
+# -----------------------------------------------------------------------
+# SQL-safety helpers + isolation policy (issue #19), no DB required
+# -----------------------------------------------------------------------
+
+from hexus.store import _escape_like, _resolve_isolation  # noqa: E402
+
+
+def test_escape_like_neutralizes_wildcards():
+    assert _escape_like("%") == r"\%"
+    assert _escape_like("_") == r"\_"
+    assert _escape_like("a_b%c") == r"a\_b\%c"
+    # Backslash escaped first so it can't double-escape a following wildcard.
+    assert _escape_like("\\%") == r"\\\%"
+    # Plain text is untouched.
+    assert _escape_like("hello world") == "hello world"
+
+
+def test_resolve_isolation_default_shared(monkeypatch):
+    monkeypatch.delenv("HEXUS_MEMORY_ISOLATION", raising=False)
+    assert _resolve_isolation() == "shared"
+
+
+def test_resolve_isolation_strict_from_env(monkeypatch):
+    monkeypatch.setenv("HEXUS_MEMORY_ISOLATION", "STRICT")
+    assert _resolve_isolation() == "strict"
+    monkeypatch.setenv("HEXUS_MEMORY_ISOLATION", "shared")
+    assert _resolve_isolation() == "shared"
+    # Explicit arg wins over env.
+    assert _resolve_isolation("strict") == "strict"
+    # Unknown value falls back to shared.
+    monkeypatch.setenv("HEXUS_MEMORY_ISOLATION", "banana")
+    assert _resolve_isolation() == "shared"
