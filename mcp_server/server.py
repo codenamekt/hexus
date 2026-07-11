@@ -389,6 +389,34 @@ def _wrap_with_bearer_auth(app, token: str):
     return asgi
 
 
+def _wrap_with_identity(app):
+    """Wrap an ASGI app so each HTTP request's `X-Hermes-Session-Key` header
+    is published as the authoritative caller identity for the duration of the
+    request (``tools.current_caller``).
+
+    This is what turns `agent_identity` from a client-asserted free choice into
+    a server-derived value (issue #19 item A): tool functions prefer this
+    identity over the client's `agent_identity` arg for writes/mutations, so an
+    authenticated client can no longer act as another agent. Runs inside the
+    bearer-auth gate, so only authenticated requests set an identity. Non-HTTP
+    scopes (lifespan/websocket) pass through untouched.
+    """
+
+    async def asgi(scope, receive, send):
+        if scope.get("type") != "http":
+            await app(scope, receive, send)
+            return
+        headers = dict(scope.get("headers") or [])
+        raw = headers.get(b"x-hermes-session-key", b"").decode("latin-1").strip()
+        token = tools.current_caller.set(raw or None)
+        try:
+            await app(scope, receive, send)
+        finally:
+            tools.current_caller.reset(token)
+
+    return asgi
+
+
 def _build_server(
     store: MemoryStore,
     *,
@@ -1241,6 +1269,9 @@ def _build_server(
     def get_asgi_app_with_metrics(*args, **kwargs):
         app = _orig_get_asgi_app(*args, **kwargs)
         from starlette.responses import Response
+        from . import tools
+
+        tools.http_transport_active = True
 
         async def metrics(request):
             return Response(_generate_metrics(store), media_type="text/plain")
@@ -1253,6 +1284,11 @@ def _build_server(
         # app (rather than adding Starlette middleware) keeps /metrics
         # covered and leaves the streamable-http lifespan/websocket scopes
         # untouched.
+        # Publish the per-request X-Hermes-Session-Key as the caller identity
+        # (server-derived agent identity — issue #19 item A) before the auth
+        # gate hands off to the MCP app.
+        app = _wrap_with_identity(app)
+
         token = os.environ.get("HEXUS_API_TOKEN")
         if token:
             logger.info("HTTP transport: bearer-token auth enabled (HEXUS_API_TOKEN).")
