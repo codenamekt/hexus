@@ -128,6 +128,9 @@ current_caller: ContextVar[Optional[str]] = ContextVar(
     "hexus_current_caller", default=None
 )
 
+# Flag to indicate if the HTTP transport is active. Used to audit ContextVar propagation.
+http_transport_active = False
+
 
 def _caller_identity(args: Dict[str, Any]) -> Optional[str]:
     """Server-derived transport identity, or None when none was set.
@@ -141,6 +144,12 @@ def _caller_identity(args: Dict[str, Any]) -> Optional[str]:
     v = current_caller.get()
     if isinstance(v, str) and v.strip():
         return v.strip()
+    if http_transport_active:
+        logger.warning(
+            "current_caller ContextVar is None inside tool invocation on HTTP transport. "
+            "This suggests ContextVar propagation through FastMCP dispatch has failed, "
+            "or the request was missing the X-Hermes-Session-Key header."
+        )
     return None
 
 

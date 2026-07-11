@@ -1269,6 +1269,8 @@ def _build_server(
     def get_asgi_app_with_metrics(*args, **kwargs):
         app = _orig_get_asgi_app(*args, **kwargs)
         from starlette.responses import Response
+        from . import tools
+        tools.http_transport_active = True
 
         async def metrics(request):
             return Response(_generate_metrics(store), media_type="text/plain")

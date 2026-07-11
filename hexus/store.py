@@ -2339,35 +2339,30 @@ class MemoryStore:
         When `agent_identity` is supplied the session lookup is scoped to that
         agent, so a caller cannot summarize another agent's session by id.
         """
-        scope = "" if agent_identity is None else " AND agent_identity = %s"
-        count_sql = f"SELECT COUNT(*) FROM conversations WHERE session_id = %s{scope}"
+        clauses = ["session_id = %s"]
+        params = [session_id]
+        if agent_identity is not None:
+            clauses.append("agent_identity = %s")
+            params.append(agent_identity)
+
+        where_clause = " AND ".join(clauses)
+        count_sql = f"SELECT COUNT(*) FROM conversations WHERE {where_clause}"
         sql = f"""
         WITH centroid AS (
             SELECT AVG(embedding) AS vec
             FROM conversations
-            WHERE session_id = %s{scope}
+            WHERE {where_clause}
         )
         SELECT id, role, content, ts, metadata,
                1 - (embedding <=> (SELECT vec FROM centroid)) AS centrality_score
         FROM conversations
-        WHERE session_id = %s{scope}
+        WHERE {where_clause}
           AND embedding IS NOT NULL
         ORDER BY embedding <=> (SELECT vec FROM centroid)
         LIMIT %s
         """
-        count_params: Tuple[Any, ...] = (
-            (session_id,) if agent_identity is None else (session_id, agent_identity)
-        )
-        if agent_identity is None:
-            main_params: Tuple[Any, ...] = (session_id, session_id, limit)
-        else:
-            main_params = (
-                session_id,
-                agent_identity,
-                session_id,
-                agent_identity,
-                limit,
-            )
+        count_params = tuple(params)
+        main_params = tuple(params) + tuple(params) + (limit,)
         with self._get_pool().connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(count_sql, count_params)

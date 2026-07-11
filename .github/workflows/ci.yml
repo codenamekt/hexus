@@ -81,6 +81,8 @@ jobs:
               "mcp_server/__init__.py",
               "mcp_server/cli.py",
               "mcp_server/import_cli.py",
+              "mcp_server/server.py",
+              "mcp_server/tools.py",
           ]
           missing = [r for r in required if r not in names]
           assert not missing, f"{whl} is missing: {missing}"
