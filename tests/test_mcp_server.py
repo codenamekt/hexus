@@ -1387,8 +1387,12 @@ def test_remove_escapes_like_wildcards(store):
     """`remove(old_text="%")` must delete only rows containing a literal '%',
     not every row in the (agent, target) scope."""
     agent = agent_of(store)
-    store.add(agent_identity=agent, target="memory", content="100% done", embedding=_EMB)
-    store.add(agent_identity=agent, target="memory", content="all clear", embedding=_EMB)
+    store.add(
+        agent_identity=agent, target="memory", content="100% done", embedding=_EMB
+    )
+    store.add(
+        agent_identity=agent, target="memory", content="all clear", embedding=_EMB
+    )
 
     deleted = store.remove(agent_identity=agent, target="memory", old_text="%")
     assert deleted == 1
@@ -1402,12 +1406,18 @@ def test_remove_escapes_like_wildcards(store):
 def test_remove_escapes_underscore_wildcard(store):
     """'_' must match literally, not 'any single character'."""
     agent = agent_of(store)
-    store.add(agent_identity=agent, target="memory", content="a_b marker", embedding=_EMB)
-    store.add(agent_identity=agent, target="memory", content="axb marker", embedding=_EMB)
+    store.add(
+        agent_identity=agent, target="memory", content="a_b marker", embedding=_EMB
+    )
+    store.add(
+        agent_identity=agent, target="memory", content="axb marker", embedding=_EMB
+    )
 
     deleted = store.remove(agent_identity=agent, target="memory", old_text="a_b")
     assert deleted == 1
-    remaining = [r["content"] for r in store.list_entries(agent_identity=agent, limit=50)]
+    remaining = [
+        r["content"] for r in store.list_entries(agent_identity=agent, limit=50)
+    ]
     assert "axb marker" in remaining
 
 
@@ -1438,7 +1448,12 @@ def test_summarize_session_scoped_to_agent(store):
     for role, text in (("user", "hello there"), ("assistant", "general kenobi")):
         tools.memory_append_turn(
             store,
-            {"session_id": session_id, "agent_identity": agent, "role": role, "content": text},
+            {
+                "session_id": session_id,
+                "agent_identity": agent,
+                "role": role,
+                "content": text,
+            },
         )
 
     wrong = store.summarize_session(session_id=session_id, agent_identity="not-me")

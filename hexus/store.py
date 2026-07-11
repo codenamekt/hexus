@@ -2112,9 +2112,7 @@ class MemoryStore:
         """
         return self._bump_entry_count(entry_id, "confirm_count", agent_identity)
 
-    def reject_entry(
-        self, entry_id: int, agent_identity: Optional[str] = None
-    ) -> bool:
+    def reject_entry(self, entry_id: int, agent_identity: Optional[str] = None) -> bool:
         """Increment reject_count in metadata JSONB for the given entry ID.
 
         Scoped to `agent_identity` when supplied — see `confirm_entry`.
