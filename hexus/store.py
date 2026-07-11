@@ -54,6 +54,41 @@ logger = logging.getLogger(__name__)
 _cross_encoder_model: Any = None
 _cross_encoder_lock = threading.Lock()
 
+# Tables that carry a `metadata` JSONB column and a sequential `id`; the only
+# identifiers ever interpolated into `increment_recall_counts`'s SQL. Anything
+# outside this set is rejected rather than interpolated — a table name is an
+# identifier, not a bindable parameter, so an allowlist is the safe equivalent
+# of parameterization here.
+_RECALL_COUNT_TABLES = frozenset({"memory_entries", "conversations", "delegations"})
+
+
+def _resolve_isolation(value: Optional[str] = None) -> str:
+    """Resolve the multi-agent isolation policy.
+
+    'shared'  (default): reads/recall/search may span every agent's memory —
+                         convenient for a trusted fleet that wants one shared
+                         knowledge base. Cross-agent *mutations* are still
+                         blocked (see the by-id store methods).
+    'strict':            reads are scoped to the caller's own agent_identity;
+                         cross-agent reads require an explicit identity.
+
+    Resolution: explicit `value` arg, else HEXUS_MEMORY_ISOLATION env var,
+    else 'shared'.
+    """
+    raw = value if value is not None else os.environ.get("HEXUS_MEMORY_ISOLATION")
+    return "strict" if (raw or "").strip().lower() == "strict" else "shared"
+
+
+def _escape_like(text: str) -> str:
+    r"""Escape LIKE metacharacters so caller-supplied text matches literally.
+
+    Backslash must be escaped first (it is the ESCAPE character), then the two
+    wildcards `%` and `_`. Callers must pair this with an ``ESCAPE '\'`` clause.
+    Without it, `remove(old_text="%")` matches — and deletes — every row in the
+    scope, and `_` silently matches any single character.
+    """
+    return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
 
 def get_cross_encoder() -> Any:
     global _cross_encoder_model
@@ -349,6 +384,7 @@ class MemoryStore:
         max_lifetime: float = 300.0,
         entity_extractor_enabled: bool = True,
         entity_extractor_patterns: Optional[Dict[str, str]] = None,
+        isolation: Optional[str] = None,
     ):
         """Open a lazily-initialized, self-draining ConnectionPool.
 
@@ -392,6 +428,11 @@ class MemoryStore:
             enabled=entity_extractor_enabled,
         )
         self._ccr_cache = CCRCache()
+
+        # Multi-agent isolation policy. 'shared' (default) lets reads span
+        # agents; 'strict' scopes reads to the caller. Cross-agent mutations
+        # are blocked in both modes (see confirm_entry/reject_entry/fetch_full).
+        self.isolation = _resolve_isolation(isolation)
 
         # Resolve vector precision configuration
         precision = os.environ.get("HEXUS_VECTOR_PRECISION", "float32").lower()
@@ -904,22 +945,24 @@ class MemoryStore:
             hash_target = compressed if compressed is not None else new_content
             content_hash = hashlib.sha256(hash_target.encode("utf-8")).digest()
 
+        like_pattern = f"%{_escape_like(old_text)}%"
+
         with self._get_pool().connection() as conn:
             with conn.cursor() as cur:
                 # Find matching rows to update cache
                 cur.execute(
-                    """
+                    r"""
                     SELECT id FROM memory_entries
                      WHERE agent_identity = %s
                        AND target = %s
-                       AND content LIKE %s
+                       AND content LIKE %s ESCAPE '\'
                     """,
-                    (agent_identity, target, f"%{old_text}%"),
+                    (agent_identity, target, like_pattern),
                 )
                 matching_ids = [r[0] for r in cur.fetchall()]
 
                 cur.execute(
-                    """
+                    r"""
                     UPDATE memory_entries
                        SET content      = %s,
                            embedding    = %s::vector,
@@ -929,7 +972,7 @@ class MemoryStore:
                            updated_at   = now()
                       WHERE agent_identity = %s
                         AND target = %s
-                        AND content LIKE %s
+                        AND content LIKE %s ESCAPE '\'
                     """,
                     (
                         new_content,
@@ -939,7 +982,7 @@ class MemoryStore:
                         content_hash,
                         agent_identity,
                         target,
-                        f"%{old_text}%",
+                        like_pattern,
                     ),
                 )
                 updated = cur.rowcount
@@ -962,16 +1005,18 @@ class MemoryStore:
 
         Returns the number of rows deleted.
         """
+        like_pattern = f"%{_escape_like(old_text)}%"
+
         with self._get_pool().connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    """
+                    r"""
                     DELETE FROM memory_entries
                      WHERE agent_identity = %s
                        AND target = %s
-                       AND content LIKE %s
+                       AND content LIKE %s ESCAPE '\'
                     """,
-                    (agent_identity, target, f"%{old_text}%"),
+                    (agent_identity, target, like_pattern),
                 )
                 deleted = cur.rowcount
                 conn.commit()
@@ -982,17 +1027,25 @@ class MemoryStore:
     def list_entries(
         self,
         *,
-        agent_identity: str,
+        agent_identity: Optional[str] = None,
         target: Optional[str] = None,
         limit: int = 100,
         offset: int = 0,
     ) -> List[Dict[str, Any]]:
-        """List entries in an agent's scope. If target is None, both stores."""
-        params: List[Any] = [agent_identity]
-        target_clause = ""
+        """List entries in an agent's scope.
+
+        agent_identity=None/empty → list across ALL agents (matches `search`
+        and `count`). target=None → both stores.
+        """
+        clauses: List[str] = []
+        params: List[Any] = []
+        if agent_identity:
+            clauses.append("agent_identity = %s")
+            params.append(agent_identity)
         if target:
-            target_clause = "AND target = %s"
+            clauses.append("target = %s")
             params.append(target)
+        where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
         params.append(limit)
         params.append(offset)
 
@@ -1002,8 +1055,7 @@ class MemoryStore:
                     f"""
                     SELECT id, agent_identity, target, content, created_at, updated_at, metadata
                     FROM memory_entries
-                    WHERE agent_identity = %s
-                    {target_clause}
+                    {where}
                     ORDER BY updated_at DESC
                     LIMIT %s
                     OFFSET %s
@@ -1295,18 +1347,37 @@ class MemoryStore:
 
         return rows
 
-    def fetch_full(self, memory_id: int) -> Optional[str]:
-        """Fetch the original full content of a memory entry, checking CCRCache first."""
-        cached = self._ccr_cache.get(memory_id)
-        if cached is not None:
-            return cached
+    def fetch_full(
+        self, memory_id: int, agent_identity: Optional[str] = None
+    ) -> Optional[str]:
+        """Fetch the original full content of a memory entry, checking CCRCache first.
+
+        When isolation is 'strict' and an `agent_identity` is supplied, the
+        read is scoped to that agent — the CCRCache short-circuit is bypassed
+        too, since the cache is keyed by id alone and would otherwise leak a
+        row the caller doesn't own. In 'shared' mode reads span agents (the
+        default trusted-fleet behavior) and the cache is used as before.
+        """
+        scoped = self.isolation == "strict" and agent_identity is not None
+
+        if not scoped:
+            cached = self._ccr_cache.get(memory_id)
+            if cached is not None:
+                return cached
 
         with self._get_pool().connection() as conn:
             with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT content FROM memory_entries WHERE id = %s",
-                    (memory_id,),
-                )
+                if scoped:
+                    cur.execute(
+                        "SELECT content FROM memory_entries "
+                        "WHERE id = %s AND agent_identity = %s",
+                        (memory_id, agent_identity),
+                    )
+                else:
+                    cur.execute(
+                        "SELECT content FROM memory_entries WHERE id = %s",
+                        (memory_id,),
+                    )
                 row = cur.fetchone()
                 if row:
                     content = row[0]
@@ -1749,35 +1820,52 @@ class MemoryStore:
         conversations_ttl_days: Optional[int] = None,
         memories_ttl_days: Optional[int] = None,
         delegations_ttl_days: Optional[int] = None,
+        dry_run: bool = False,
     ) -> Dict[str, int]:
-        """Delete records older than the specified TTL. Returns counts of deleted items."""
+        """Delete records older than the specified TTL. Returns counts of
+        deleted items.
+
+        With ``dry_run=True`` nothing is deleted: each branch runs a
+        ``SELECT count(*)`` instead of a ``DELETE`` and the counts of rows
+        that *would* be removed are returned. Used by the ``memory_cleanup``
+        MCP tool to preview a destructive run before the caller confirms it.
+        """
         deleted = {"conversations": 0, "memory_entries": 0, "delegations": 0}
+        # (table, timestamp column, ttl days) for each configured target.
+        targets = [
+            ("conversations", "ts", conversations_ttl_days),
+            ("memory_entries", "updated_at", memories_ttl_days),
+            ("delegations", "ts", delegations_ttl_days),
+        ]
         with self._get_pool().connection() as conn:
             with conn.cursor() as cur:
-                if conversations_ttl_days is not None and conversations_ttl_days > 0:
-                    limit_date = datetime.now(timezone.utc) - timedelta(
-                        days=conversations_ttl_days
+                for table, ts_col, ttl in targets:
+                    if ttl is None or ttl <= 0:
+                        continue
+                    limit_date = datetime.now(timezone.utc) - timedelta(days=ttl)
+                    assert table in {
+                        "conversations",
+                        "memory_entries",
+                        "delegations",
+                    }, f"Invalid table: {table}"
+                    assert ts_col in {"ts", "updated_at"}, (
+                        f"Invalid timestamp column: {ts_col}"
                     )
-                    cur.execute(
-                        "DELETE FROM conversations WHERE ts < %s", (limit_date,)
-                    )
-                    deleted["conversations"] = cur.rowcount
-                if memories_ttl_days is not None and memories_ttl_days > 0:
-                    limit_date = datetime.now(timezone.utc) - timedelta(
-                        days=memories_ttl_days
-                    )
-                    cur.execute(
-                        "DELETE FROM memory_entries WHERE updated_at < %s",
-                        (limit_date,),
-                    )
-                    deleted["memory_entries"] = cur.rowcount
-                if delegations_ttl_days is not None and delegations_ttl_days > 0:
-                    limit_date = datetime.now(timezone.utc) - timedelta(
-                        days=delegations_ttl_days
-                    )
-                    cur.execute("DELETE FROM delegations WHERE ts < %s", (limit_date,))
-                    deleted["delegations"] = cur.rowcount
-                conn.commit()
+                    if dry_run:
+                        # table/ts_col are internal literals (not caller-supplied).
+                        cur.execute(
+                            f"SELECT count(*) FROM {table} WHERE {ts_col} < %s",
+                            (limit_date,),
+                        )
+                        deleted[table] = int(cur.fetchone()[0])
+                    else:
+                        cur.execute(
+                            f"DELETE FROM {table} WHERE {ts_col} < %s",
+                            (limit_date,),
+                        )
+                        deleted[table] = cur.rowcount
+                if not dry_run:
+                    conn.commit()
         return deleted
 
     # -- Maintenance ---------------------------------------------------------
@@ -2021,38 +2109,47 @@ class MemoryStore:
                 filtered.append(r)
         return filtered
 
-    def confirm_entry(self, entry_id: int) -> bool:
-        """Increment confirm_count in metadata JSONB for the given entry ID."""
-        sql = """
-        UPDATE memory_entries
-        SET metadata = jsonb_set(
-            metadata,
-            '{confirm_count}',
-            (COALESCE(metadata->>'confirm_count', '0')::int + 1)::text::jsonb
-        )
-        WHERE id = %s
-        """
-        with self._get_pool().connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(sql, (entry_id,))
-                updated = cur.rowcount
-                conn.commit()
-                return updated > 0
+    def confirm_entry(
+        self, entry_id: int, agent_identity: Optional[str] = None
+    ) -> bool:
+        """Increment confirm_count in metadata JSONB for the given entry ID.
 
-    def reject_entry(self, entry_id: int) -> bool:
-        """Increment reject_count in metadata JSONB for the given entry ID."""
-        sql = """
+        When `agent_identity` is supplied the mutation is scoped to that agent,
+        so one agent cannot bump another agent's entry by guessing its id.
+        Cross-agent mutations are blocked regardless of the isolation mode.
+        """
+        return self._bump_entry_count(entry_id, "confirm_count", agent_identity)
+
+    def reject_entry(self, entry_id: int, agent_identity: Optional[str] = None) -> bool:
+        """Increment reject_count in metadata JSONB for the given entry ID.
+
+        Scoped to `agent_identity` when supplied — see `confirm_entry`.
+        """
+        return self._bump_entry_count(entry_id, "reject_count", agent_identity)
+
+    def _bump_entry_count(
+        self, entry_id: int, field: str, agent_identity: Optional[str]
+    ) -> bool:
+        # `field` is one of the fixed literals passed by confirm/reject above,
+        # never caller input, so interpolating it into the JSONB path is safe.
+        if field not in ("confirm_count", "reject_count"):
+            raise ValueError(f"unknown count field: {field!r}")
+        sql = f"""
         UPDATE memory_entries
         SET metadata = jsonb_set(
             metadata,
-            '{reject_count}',
-            (COALESCE(metadata->>'reject_count', '0')::int + 1)::text::jsonb
+            '{{{field}}}',
+            (COALESCE(metadata->>'{field}', '0')::int + 1)::text::jsonb
         )
         WHERE id = %s
         """
+        params: List[Any] = [entry_id]
+        if agent_identity is not None:
+            sql += "  AND agent_identity = %s\n"
+            params.append(agent_identity)
         with self._get_pool().connection() as conn:
             with conn.cursor() as cur:
-                cur.execute(sql, (entry_id,))
+                cur.execute(sql, tuple(params))
                 updated = cur.rowcount
                 conn.commit()
                 return updated > 0
@@ -2060,6 +2157,12 @@ class MemoryStore:
     def increment_recall_counts(self, table: str, ids: List[int]) -> None:
         if not ids:
             return
+        if table not in _RECALL_COUNT_TABLES:
+            # `table` is an SQL identifier interpolated below, so it cannot be
+            # a bound parameter — reject anything outside the known set instead
+            # of trusting the caller (guards against SQL injection via a
+            # derived/attacker-influenced table name).
+            raise ValueError(f"unknown table for recall counts: {table!r}")
         sql = f"""
         UPDATE {table}
         SET metadata = jsonb_set(
@@ -2235,26 +2338,40 @@ class MemoryStore:
         *,
         session_id: str,
         limit: int = 5,
+        agent_identity: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Compute the vector centroid of a session's turns and find the K closest turns."""
-        count_sql = "SELECT COUNT(*) FROM conversations WHERE session_id = %s"
-        sql = """
+        """Compute the vector centroid of a session's turns and find the K closest turns.
+
+        When `agent_identity` is supplied the session lookup is scoped to that
+        agent, so a caller cannot summarize another agent's session by id.
+        """
+        clauses = ["session_id = %s"]
+        params = [session_id]
+        if agent_identity is not None:
+            clauses.append("agent_identity = %s")
+            params.append(agent_identity)
+
+        where_clause = " AND ".join(clauses)
+        count_sql = f"SELECT COUNT(*) FROM conversations WHERE {where_clause}"
+        sql = f"""
         WITH centroid AS (
             SELECT AVG(embedding) AS vec
             FROM conversations
-            WHERE session_id = %s
+            WHERE {where_clause}
         )
         SELECT id, role, content, ts, metadata,
                1 - (embedding <=> (SELECT vec FROM centroid)) AS centrality_score
         FROM conversations
-        WHERE session_id = %s
+        WHERE {where_clause}
           AND embedding IS NOT NULL
         ORDER BY embedding <=> (SELECT vec FROM centroid)
         LIMIT %s
         """
+        count_params = tuple(params)
+        main_params = tuple(params) + tuple(params) + (limit,)
         with self._get_pool().connection() as conn:
             with conn.cursor() as cur:
-                cur.execute(count_sql, (session_id,))
+                cur.execute(count_sql, count_params)
                 total_turns = cur.fetchone()[0]
 
             if total_turns == 0:
@@ -2265,7 +2382,7 @@ class MemoryStore:
                 }
 
             with conn.cursor(row_factory=dict_row) as cur:
-                cur.execute(sql, (session_id, session_id, limit))
+                cur.execute(sql, main_params)
                 rows = list(cur.fetchall())
                 for r in rows:
                     if r.get("ts") and hasattr(r["ts"], "isoformat"):

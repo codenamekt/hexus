@@ -87,6 +87,7 @@ When running via Docker or as a standalone MCP server, you can pass the followin
 * `HEXUS_DB_PASS` - Used by our `compose.yml` to set the Postgres password (and the default DSN's password).
 * `HEXUS_TRANSPORT` - MCP transport: `"stdio"` (default) or `"http"`.
 * `HEXUS_AGENT_IDENTITY` - Default agent identity for tool calls that don't supply one (default: `"default"`).
+* `HEXUS_MEMORY_ISOLATION` - Multi-agent read isolation: `"shared"` (default) lets any agent recall/search/read every agent's memory — a single shared knowledge base for a trusted fleet; `"strict"` scopes reads to the calling agent's own identity. Cross-agent **mutations** (confirm/reject/remove/forget/summarize by id) are always scoped to the caller in **both** modes. On the HTTP transport the caller's identity is taken server-side from the `X-Hermes-Session-Key` header and overrides any client-supplied `agent_identity`, so an authenticated client cannot act as another agent.
 * `HEXUS_EMBED_EAGER_LOAD` - Set to `"1"` to pre-load the local embedding model at startup (saves ~1-2s on first use).
 * `HEXUS_EMBED_DEVICE` - Torch device for the embedder (default: `"cpu"`).
 * `HEXUS_WEBHOOK_URL` / `HEXUS_WEBHOOK_SECRET` - (Optional) POST a signed webhook on memory writes.
