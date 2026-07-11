@@ -1772,6 +1772,8 @@ class MemoryStore:
                     if ttl is None or ttl <= 0:
                         continue
                     limit_date = datetime.now(timezone.utc) - timedelta(days=ttl)
+                    assert table in {"conversations", "memory_entries", "delegations"}, f"Invalid table: {table}"
+                    assert ts_col in {"ts", "updated_at"}, f"Invalid timestamp column: {ts_col}"
                     if dry_run:
                         # table/ts_col are internal literals (not caller-supplied).
                         cur.execute(
