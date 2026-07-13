@@ -64,6 +64,27 @@ pip install hexus
 ```
 *Note: Once installed, just point Hermes to it! You can also just drop the `hexus` module files straight into your `~/.hermes/plugins/hexus/` directory. Hermes's discovery system will automatically pick it up and initialize it on startup!*
 
+#### ⚠️ Hermes Configuration: Two Blocks Required
+When configuring Hexus as a Hermes memory plugin, you need **both** of the following configuration blocks in your Hermes config:
+
+**Block 1** — Enables the memory plugin system:
+```yaml
+plugins:
+  memory:
+    provider: hexus
+    config:
+      # The Postgres connection string (required)
+      dsn: "dbname=hermes_test user=postgres password=postgres_secret host=localhost"
+```
+
+**Block 2** — Tells Hermes to use Hexus as the memory provider:
+```yaml
+memory:
+  provider: hexus
+```
+
+*Why both?* Block 1 registers and configures the Hexus plugin itself. Block 2 instructs Hermes to actually use Hexus as its memory backend.
+
 ### Option 2: Docker & MCP Server (Claude, Cursor, etc.)
 The easiest way to run the standalone MCP server is via Docker (GHCR). 
 
