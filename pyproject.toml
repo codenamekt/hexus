@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hexus"
-version = "0.9.1"
+version = "0.9.2"
 description = "Hexus: Postgres + hexus memory provider plugin for hermes-agent AND a standalone MCP server. Local BERT (MiniLM-L6-v2) embeddings replace the upstream HTTP embedder; multi-agent storage with per-minion themes, async writer, no LLM in the memory hot path."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -55,6 +55,10 @@ dependencies = [
     "PyYAML>=6.0,<7",
     "sentence-transformers>=2.7.0,<4",
     "numpy>=1.24,<3",
+    # Used by hexus.webhook.dispatcher (imported whenever webhook_url is
+    # configured). Previously arrived only transitively via
+    # sentence-transformers -> huggingface_hub; declare it explicitly.
+    "requests>=2.28,<3",
 ]
 
 [project.optional-dependencies]

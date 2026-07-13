@@ -1361,3 +1361,137 @@ def test_memory_consolidate_tool(store, monkeypatch):
     assert res["status"] == "ok"
     assert "low_confidence" in res
     assert "cooccurring" in res
+
+
+# -----------------------------------------------------------------------
+# Multi-agent isolation + SQL safety (issue #19)
+# -----------------------------------------------------------------------
+
+_EMB = [0.1] * 384
+
+
+def test_increment_recall_counts_rejects_unknown_table(store):
+    """The table identifier is interpolated into SQL, so anything outside the
+    known set must be rejected before a query is built (no DB round-trip)."""
+    import pytest as _pytest
+
+    with _pytest.raises(ValueError):
+        store.increment_recall_counts(
+            "memory_entries; DROP TABLE memory_entries; --", [1]
+        )
+    # A known table with no ids is a no-op and must not raise.
+    store.increment_recall_counts("memory_entries", [])
+
+
+def test_remove_escapes_like_wildcards(store):
+    """`remove(old_text="%")` must delete only rows containing a literal '%',
+    not every row in the (agent, target) scope."""
+    agent = agent_of(store)
+    store.add(
+        agent_identity=agent, target="memory", content="100% done", embedding=_EMB
+    )
+    store.add(
+        agent_identity=agent, target="memory", content="all clear", embedding=_EMB
+    )
+
+    deleted = store.remove(agent_identity=agent, target="memory", old_text="%")
+    assert deleted == 1
+
+    remaining = store.list_entries(agent_identity=agent, target="memory", limit=50)
+    contents = [r["content"] for r in remaining]
+    assert "all clear" in contents
+    assert "100% done" not in contents
+
+
+def test_remove_escapes_underscore_wildcard(store):
+    """'_' must match literally, not 'any single character'."""
+    agent = agent_of(store)
+    store.add(
+        agent_identity=agent, target="memory", content="a_b marker", embedding=_EMB
+    )
+    store.add(
+        agent_identity=agent, target="memory", content="axb marker", embedding=_EMB
+    )
+
+    deleted = store.remove(agent_identity=agent, target="memory", old_text="a_b")
+    assert deleted == 1
+    remaining = [
+        r["content"] for r in store.list_entries(agent_identity=agent, limit=50)
+    ]
+    assert "axb marker" in remaining
+
+
+def test_confirm_reject_scoped_to_agent(store):
+    """A caller cannot confirm/reject another agent's entry by id."""
+    agent = agent_of(store)
+    row_id = store.add(
+        agent_identity=agent, target="memory", content="scoped entry", embedding=_EMB
+    )
+    assert row_id is not None
+
+    # Wrong identity → no row matches → no bump.
+    assert store.confirm_entry(row_id, "someone-else") is False
+    assert store.reject_entry(row_id, "someone-else") is False
+    # Correct identity → bump succeeds.
+    assert store.confirm_entry(row_id, agent) is True
+    assert store.reject_entry(row_id, agent) is True
+    # Unscoped (None) still works — the in-process/stdio compatibility path.
+    assert store.confirm_entry(row_id, None) is True
+
+
+def test_summarize_session_scoped_to_agent(store):
+    """summarize_session scoped to the wrong agent sees no turns."""
+    from mcp_server import tools
+
+    agent = agent_of(store)
+    session_id = "iso-session-" + agent
+    for role, text in (("user", "hello there"), ("assistant", "general kenobi")):
+        tools.memory_append_turn(
+            store,
+            {
+                "session_id": session_id,
+                "agent_identity": agent,
+                "role": role,
+                "content": text,
+            },
+        )
+
+    wrong = store.summarize_session(session_id=session_id, agent_identity="not-me")
+    assert wrong["turn_count"] == 0
+
+    right = store.summarize_session(session_id=session_id, agent_identity=agent)
+    assert right["turn_count"] == 2
+
+
+def test_fetch_full_shared_reads_cross_agent(store):
+    """Default 'shared' isolation: reads by id span agents (the feature)."""
+    agent = agent_of(store)
+    row_id = store.add(
+        agent_identity=agent, target="memory", content="shared content", embedding=_EMB
+    )
+    # A different identity can still read it in shared mode.
+    assert store.fetch_full(row_id, "another-agent") == "shared content"
+
+
+def test_fetch_full_strict_scopes_reads(store):
+    """'strict' isolation: fetch_full is confined to the caller's identity,
+    and the id-keyed CCRCache cannot leak another agent's row."""
+    from hexus.store import MemoryStore
+
+    agent = agent_of(store)
+    row_id = store.add(
+        agent_identity=agent, target="memory", content="secret content", embedding=_EMB
+    )
+
+    strict = MemoryStore(os.environ["PG_TEST_DSN"], isolation="strict")
+    try:
+        assert strict.isolation == "strict"
+        # Wrong identity → no read, even though the id exists.
+        assert strict.fetch_full(row_id, "not-the-owner") is None
+        # Correct identity → read succeeds.
+        assert strict.fetch_full(row_id, agent) == "secret content"
+        # And after a legit read populated the cache, a wrong-identity read
+        # still must not be served from it.
+        assert strict.fetch_full(row_id, "not-the-owner") is None
+    finally:
+        strict.close()

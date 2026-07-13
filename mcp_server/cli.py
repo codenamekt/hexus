@@ -98,6 +98,17 @@ def cmd_serve(args: argparse.Namespace) -> int:
             mcp.settings.port = args.port
         except AttributeError:  # pragma: no cover — FastMCP internals
             pass
+        if args.host not in ("127.0.0.1", "localhost", "::1") and not os.environ.get(
+            "HEXUS_API_TOKEN"
+        ):
+            logger.warning(
+                "Serving HTTP on %s:%d with no HEXUS_API_TOKEN set — the endpoint "
+                "is UNAUTHENTICATED and reachable off-host. Any client can "
+                "read/write/delete all agents' memory. Set HEXUS_API_TOKEN, or "
+                "bind to 127.0.0.1 and front it with an authenticating proxy.",
+                args.host,
+                args.port,
+            )
         mcp.run(transport="streamable-http")
     else:  # pragma: no cover — argparse should prevent this
         print(f"ERROR: unknown transport {args.transport!r}", file=sys.stderr)
@@ -166,7 +177,16 @@ def main(argv: Optional[List[str]] = None) -> int:
             "endpoint on --host/--port for fleet use."
         ),
     )
-    p_serve.add_argument("--host", default="0.0.0.0")
+    p_serve.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help=(
+            "Bind address for the HTTP transport. Defaults to 127.0.0.1 "
+            "(loopback) so the server is not exposed off-host by default. "
+            "Use 0.0.0.0 for network/fleet exposure, and set HEXUS_API_TOKEN "
+            "(bearer-token auth) when you do."
+        ),
+    )
     p_serve.add_argument("--port", type=int, default=8000)
     p_serve.set_defaults(func=cmd_serve)
 

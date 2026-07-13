@@ -90,13 +90,31 @@ The easiest way to run the standalone MCP server is via Docker (GHCR).
 
 > **Note:** The Docker MCP server requires a running PostgreSQL database with `pgvector` enabled. You can reference or use our provided `docker/compose.yml` file as a quick example to spin one up!
 
+**Environment Variables:**
+When running via Docker or as a standalone MCP server, you can pass the following environment variables:
+* `HEXUS_DSN` - The Postgres connection string (e.g., `dbname=hermes_test user=postgres password=secret host=pg`).
+* `HEXUS_DB_PASS` - Used by our `compose.yml` to set the Postgres password (and the default DSN's password).
+* `HEXUS_TRANSPORT` - MCP transport: `"stdio"` (default) or `"http"`.
+* `HEXUS_AGENT_IDENTITY` - Default agent identity for tool calls that don't supply one (default: `"default"`).
+* `HEXUS_MEMORY_ISOLATION` - Multi-agent read isolation: `"shared"` (default) lets any agent recall/search/read every agent's memory — a single shared knowledge base for a trusted fleet; `"strict"` scopes reads to the calling agent's own identity. Cross-agent **mutations** (confirm/reject/remove/forget/summarize by id) are always scoped to the caller in **both** modes. On the HTTP transport the caller's identity is taken server-side from the `X-Hermes-Session-Key` header and overrides any client-supplied `agent_identity`, so an authenticated client cannot act as another agent.
+* `HEXUS_EMBED_EAGER_LOAD` - Set to `"1"` to pre-load the local embedding model at startup (saves ~1-2s on first use).
+* `HEXUS_EMBED_DEVICE` - Torch device for the embedder (default: `"cpu"`).
+* `HEXUS_WEBHOOK_URL` / `HEXUS_WEBHOOK_SECRET` - (Optional) POST a signed webhook on memory writes.
+
+The easiest way to bring up Postgres **and** the MCP server together is the `mcp` profile in our compose file:
+
 ```bash
-# Run the MCP server via HTTP streamable transport on port 8000
-docker run -d --name hexus -p 8000:8000 ghcr.io/codenamekt/hexus:latest
+# Set the DB password first (used for both Postgres and the MCP server's DSN)
+export HEXUS_DB_PASS=postgres_secret
+
+# Starts pgvector + the MCP server (HTTP streamable transport on container port 8000)
+docker compose -f docker/compose.yml --profile mcp up
 ```
 
+> The MCP server port is `expose`d on the internal Docker network, not published to your host. To reach it from the host (e.g. on `localhost:8000`), uncomment the `ports:` mapping under the `mcp` service in `docker/compose.yml`.
+
 **Using it with Claude Code / Claude Desktop:**
-If you want to plug Hexus straight into your Claude `claude_desktop_config.json` via standard `stdio`, you can add this block to seamlessly run the Docker image in the background:
+If you want to plug Hexus straight into your Claude `claude_desktop_config.json` via standard `stdio`, add this block. It runs the server binary directly (via `--entrypoint`, so it talks clean JSON-RPC on stdio without the container's startup logging), pointed at your already-running Postgres:
 
 ```jsonc
 {
@@ -107,18 +125,21 @@ If you want to plug Hexus straight into your Claude `claude_desktop_config.json`
         "run",
         "-i",
         "--rm",
-        "-e",
-        "HEXUS_DSN=dbname=hermes_memory user=postgres host=host.docker.internal",
-        "ghcr.io/codenamekt/hexus:latest",
+        "--entrypoint",
         "hexus-mcp",
+        "ghcr.io/codenamekt/hexus:latest",
         "serve",
         "--transport",
-        "stdio"
+        "stdio",
+        "--dsn",
+        "dbname=hermes_test user=postgres password=postgres_secret host=host.docker.internal"
       ]
     }
   }
 }
 ```
+
+> This expects the schema to already exist (the compose `mcp`/`test` profiles apply the migrations). It connects to a Postgres reachable at `host.docker.internal` — adjust the `--dsn` host/password for your setup.
 
 ## 🏎️ Look at This! Ridiculously Fast Benchmarks
 We believe in speed. Check out these actual benchmarks running on a basic CPU (no GPU needed!):

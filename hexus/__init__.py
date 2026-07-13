@@ -1649,7 +1649,7 @@ class HexusMemoryProvider(MemoryProvider or object):
             return tool_error("id must be an integer")
 
         try:
-            success = self._store.confirm_entry(entry_id)
+            success = self._store.confirm_entry(entry_id, self._agent_identity)
             return json.dumps({"id": entry_id, "success": success})
         except Exception as exc:
             return json.dumps({"error": f"db: {exc}"})
@@ -1668,7 +1668,7 @@ class HexusMemoryProvider(MemoryProvider or object):
             return tool_error("id must be an integer")
 
         try:
-            success = self._store.reject_entry(entry_id)
+            success = self._store.reject_entry(entry_id, self._agent_identity)
             return json.dumps({"id": entry_id, "success": success})
         except Exception as exc:
             return json.dumps({"error": f"db: {exc}"})
@@ -1691,6 +1691,7 @@ class HexusMemoryProvider(MemoryProvider or object):
             res = self._store.summarize_session(
                 session_id=session_id,
                 limit=limit,
+                agent_identity=self._agent_identity,
             )
             return json.dumps(res)
         except Exception as exc:
@@ -1710,7 +1711,7 @@ class HexusMemoryProvider(MemoryProvider or object):
             return tool_error("id must be an integer")
 
         try:
-            content = self._store.fetch_full(entry_id)
+            content = self._store.fetch_full(entry_id, self._agent_identity)
             if content is None:
                 return json.dumps({"id": entry_id, "found": False, "content": None})
             return json.dumps({"id": entry_id, "found": True, "content": content})
