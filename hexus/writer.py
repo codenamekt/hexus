@@ -23,8 +23,9 @@ from __future__ import annotations
 import logging
 import queue
 import threading
-from typing import Any, Callable, Dict, Optional
 import weakref
+from collections.abc import Callable
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +34,7 @@ _active_writers: weakref.WeakSet[AsyncWriter] = weakref.WeakSet()
 
 # Pending-write payload — kept small so the queue stays bounded.
 class _PendingWrite:
-    __slots__ = ("action", "agent_identity", "target", "content", "extra", "metadata")
+    __slots__ = ("action", "agent_identity", "content", "extra", "metadata", "target")
 
     def __init__(
         self,
@@ -42,8 +43,8 @@ class _PendingWrite:
         agent_identity: str,
         target: str,
         content: str,
-        extra: Optional[Dict[str, Any]] = None,
-        metadata: Optional[Dict[str, Any]] = None,
+        extra: dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
     ):
         self.action = action
         self.agent_identity = agent_identity
@@ -68,10 +69,8 @@ class AsyncWriter:
         self, worker_fn: Callable[[_PendingWrite], None], *, maxsize: int = 256
     ):
         self._worker_fn = worker_fn
-        self._queue: "queue.Queue[Optional[_PendingWrite]]" = queue.Queue(
-            maxsize=maxsize
-        )
-        self._thread: Optional[threading.Thread] = None
+        self._queue: queue.Queue[_PendingWrite | None] = queue.Queue(maxsize=maxsize)
+        self._thread: threading.Thread | None = None
         self._stop = threading.Event()
         self._dropped = 0
         self._dropped_warned = False
@@ -88,8 +87,8 @@ class AsyncWriter:
         agent_identity: str,
         target: str,
         content: str,
-        extra: Optional[Dict[str, Any]] = None,
-        metadata: Optional[Dict[str, Any]] = None,
+        extra: dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> bool:
         """Enqueue a write. Returns True on accept, False on drop (queue full).
 
@@ -138,7 +137,7 @@ class AsyncWriter:
         if self._thread.is_alive():
             logger.warning("hexus writer thread did not drain within %.1fs", timeout)
 
-    def stats(self) -> Dict[str, Any]:
+    def stats(self) -> dict[str, Any]:
         with self._lock:
             lats = list(self._latencies)
         p50 = float("nan")

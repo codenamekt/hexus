@@ -24,9 +24,9 @@ import math
 import os
 import threading
 from dataclasses import dataclass, replace
-from datetime import datetime, timezone, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import psycopg
 from psycopg.rows import dict_row
@@ -62,7 +62,7 @@ _cross_encoder_lock = threading.Lock()
 _RECALL_COUNT_TABLES = frozenset({"memory_entries", "conversations", "delegations"})
 
 
-def _resolve_isolation(value: Optional[str] = None) -> str:
+def _resolve_isolation(value: str | None = None) -> str:
     """Resolve the multi-agent isolation policy.
 
     'shared'  (default): reads/recall/search may span every agent's memory —
@@ -155,7 +155,7 @@ class RerankStats:
     tokens_dropped: int = 0  # approx doc tokens never scored (truncate + capped)
     max_tokens_seen: int = 0  # largest single-doc token count observed
 
-    def as_dict(self) -> Dict[str, int]:
+    def as_dict(self) -> dict[str, int]:
         return {
             "docs_reranked": self.docs_reranked,
             "docs_over_limit": self.docs_over_limit,
@@ -187,7 +187,7 @@ def reset_rerank_stats() -> None:
         _rerank_over_limit_total = 0
 
 
-def _resolve_rerank_mode(mode: Optional[str]) -> str:
+def _resolve_rerank_mode(mode: str | None) -> str:
     raw = mode or os.environ.get(RERANK_MODE_ENV) or DEFAULT_RERANK_MODE
     candidate = raw.strip().lower()
     if candidate not in VALID_RERANK_MODES:
@@ -224,7 +224,7 @@ def _cross_encoder_max_len(model) -> int:
     return RERANK_DEFAULT_MAX_LEN
 
 
-def _split_doc_for_rerank(doc: str, tokenizer, budget: int) -> Tuple[List[str], int]:
+def _split_doc_for_rerank(doc: str, tokenizer, budget: int) -> tuple[list[str], int]:
     """Split `doc` into ≤RERANK_MAX_PASSAGES overlapping token windows.
 
     Returns (passages, tokens_unscored) where tokens_unscored is the tail
@@ -232,14 +232,14 @@ def _split_doc_for_rerank(doc: str, tokenizer, budget: int) -> Tuple[List[str], 
     """
     try:
         ids = tokenizer.encode(doc, add_special_tokens=False, verbose=False)
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001  # noqa: BLE001
         return [doc], 0
     if len(ids) <= budget:
         return [doc], 0
 
     overlap = min(RERANK_PASSAGE_OVERLAP_TOKENS, budget - 1) if budget > 1 else 0
     stride = max(1, budget - overlap)
-    passages: List[str] = []
+    passages: list[str] = []
     covered = 0
     for start in range(0, len(ids), stride):
         window = ids[start : start + budget]
@@ -256,8 +256,8 @@ def _split_doc_for_rerank(doc: str, tokenizer, budget: int) -> Tuple[List[str], 
 
 
 def rerank_scores(
-    model, query_text: Optional[str], docs: List[str], *, mode: Optional[str] = None
-) -> List[float]:
+    model, query_text: str | None, docs: list[str], *, mode: str | None = None
+) -> list[float]:
     """Score each (query, doc) with the cross-encoder, one score per doc.
 
     Handles docs longer than the cross-encoder window per `mode`
@@ -273,7 +273,7 @@ def rerank_scores(
 
     # Doc budget = window minus the query and the pair's special tokens. If we
     # can't tokenize, skip the guard and let the model truncate (old path).
-    budget: Optional[int] = None
+    budget: int | None = None
     if tokenizer is not None:
         try:
             max_len = _cross_encoder_max_len(model)
@@ -282,15 +282,15 @@ def rerank_scores(
             )
             try:
                 special = tokenizer.num_special_tokens_to_add(pair=True)
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001  # noqa: BLE001
                 special = 3
             budget = max(1, max_len - q_len - special)
         except Exception as exc:  # noqa: BLE001 — best-effort guard
             logger.debug("rerank length guard unavailable (%s); truncating", exc)
             budget = None
 
-    pairs: List[List[str]] = []
-    plan: List[Tuple[int, int]] = []  # (start, count) into pairs, per doc
+    pairs: list[list[str]] = []
+    plan: list[tuple[int, int]] = []  # (start, count) into pairs, per doc
     for doc in docs:
         doc = doc or ""
         with _rerank_stats_lock:
@@ -303,7 +303,7 @@ def rerank_scores(
 
         try:
             d_len = len(tokenizer.encode(doc, add_special_tokens=False, verbose=False))
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001  # noqa: BLE001
             d_len = 0
         if d_len <= budget:
             pairs.append([query_text, doc])
@@ -313,8 +313,7 @@ def rerank_scores(
         # Over the doc budget — count it in every mode.
         with _rerank_stats_lock:
             _rerank_stats.docs_over_limit += 1
-            if d_len > _rerank_stats.max_tokens_seen:
-                _rerank_stats.max_tokens_seen = d_len
+            _rerank_stats.max_tokens_seen = max(_rerank_stats.max_tokens_seen, d_len)
             _rerank_over_limit_total += 1
             over_count = _rerank_over_limit_total
 
@@ -361,7 +360,7 @@ def rerank_scores(
             )
 
     raw = model.predict(pairs)
-    scores: List[float] = []
+    scores: list[float] = []
     for start, count in plan:
         if count == 1:
             scores.append(float(raw[start]))
@@ -383,8 +382,8 @@ class MemoryStore:
         max_idle: float = 30.0,
         max_lifetime: float = 300.0,
         entity_extractor_enabled: bool = True,
-        entity_extractor_patterns: Optional[Dict[str, str]] = None,
-        isolation: Optional[str] = None,
+        entity_extractor_patterns: dict[str, str] | None = None,
+        isolation: str | None = None,
     ):
         """Open a lazily-initialized, self-draining ConnectionPool.
 
@@ -404,7 +403,7 @@ class MemoryStore:
         """
         self._dsn = dsn
         self._lock = threading.Lock()
-        self._pool: Optional[ConnectionPool] = None
+        self._pool: ConnectionPool | None = None
         self._min_size = min_size
         self._max_size = max_size
         self._timeout = timeout
@@ -418,7 +417,7 @@ class MemoryStore:
         if env_patterns is not None:
             try:
                 entity_extractor_patterns = json.loads(env_patterns)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 logger.warning(
                     "Failed to parse HEXUS_ENTITY_EXTRACTOR_PATTERNS: %s", exc
                 )
@@ -483,7 +482,7 @@ class MemoryStore:
 
     def ensure_schema(self) -> None:
         """Verify the schema is in place. Does NOT run DDL."""
-        with self._get_pool().connection() as conn:
+        with self._get_pool().connection() as conn:  # noqa: SIM117
             with conn.cursor() as cur:
                 cur.execute("SELECT to_regclass('memory_entries')")
                 if cur.fetchone()[0] is None:
@@ -507,7 +506,7 @@ class MemoryStore:
         # Determine target type
         target_type = "halfvec(384)" if precision == "float16" else "vector(384)"
 
-        with self._get_pool().connection() as conn:
+        with self._get_pool().connection() as conn:  # noqa: SIM117
             with conn.cursor() as cur:
                 # Check current type of memory_entries.embedding
                 cur.execute("""
@@ -557,7 +556,7 @@ class MemoryStore:
                         logger.info(
                             "Successfully altered database columns to %s", target_type
                         )
-                    except Exception as exc:
+                    except Exception as exc:  # noqa: BLE001
                         conn.rollback()
                         logger.warning(
                             "Failed to alter database column types (insufficient permissions?): %s",
@@ -651,7 +650,7 @@ class MemoryStore:
                               WITH (m = 16, ef_construction = 64);
                         """)
                     conn.commit()
-                except Exception as exc:
+                except Exception as exc:  # noqa: BLE001
                     conn.rollback()
                     logger.warning(
                         "Failed to create/ensure quantization indexes: %s", exc
@@ -790,7 +789,7 @@ class MemoryStore:
         """One-shot admin path: run the full migrations with privileged creds."""
         migrations_dir = Path(__file__).parent / "migrations"
         sql_files = sorted(migrations_dir.glob("*.sql"))
-        with psycopg.connect(admin_dsn, autocommit=True) as conn:
+        with psycopg.connect(admin_dsn, autocommit=True) as conn:  # noqa: SIM117
             with conn.cursor() as cur:
                 for sql_file in sql_files:
                     sql = sql_file.read_text(encoding="utf-8")
@@ -806,11 +805,11 @@ class MemoryStore:
         agent_identity: str,
         target: str,
         content: str,
-        embedding: Optional[List[float]] = None,
-        metadata: Optional[Dict[str, Any]] = None,
-        compressed: Optional[str] = None,
-        content_hash: Optional[bytes] = None,
-    ) -> Optional[int]:
+        embedding: list[float] | None = None,
+        metadata: dict[str, Any] | None = None,
+        compressed: str | None = None,
+        content_hash: bytes | None = None,
+    ) -> int | None:
         """Insert a memory entry. Returns row id, or None if duplicate (no-op)."""
         meta = dict(metadata or {})
         if "entities" not in meta:
@@ -825,7 +824,7 @@ class MemoryStore:
 
         vec_literal = to_hexus_literal(embedding) if embedding is not None else None
 
-        with self._get_pool().connection() as conn:
+        with self._get_pool().connection() as conn:  # noqa: SIM117
             with conn.cursor(row_factory=dict_row) as cur:
                 # Deduplication check: does a row with this content_hash, target and agent_identity exist?
                 cur.execute(
@@ -930,9 +929,9 @@ class MemoryStore:
         target: str,
         old_text: str,
         new_content: str,
-        new_embedding: Optional[List[float]] = None,
-        compressed: Optional[str] = None,
-        content_hash: Optional[bytes] = None,
+        new_embedding: list[float] | None = None,
+        compressed: str | None = None,
+        content_hash: bytes | None = None,
     ) -> int:
         """Update entries in (agent_identity, target) where content contains old_text."""
         vec_literal = (
@@ -947,7 +946,7 @@ class MemoryStore:
 
         like_pattern = f"%{_escape_like(old_text)}%"
 
-        with self._get_pool().connection() as conn:
+        with self._get_pool().connection() as conn:  # noqa: SIM117
             with conn.cursor() as cur:
                 # Find matching rows to update cache
                 cur.execute(
@@ -1007,7 +1006,7 @@ class MemoryStore:
         """
         like_pattern = f"%{_escape_like(old_text)}%"
 
-        with self._get_pool().connection() as conn:
+        with self._get_pool().connection() as conn:  # noqa: SIM117
             with conn.cursor() as cur:
                 cur.execute(
                     r"""
@@ -1027,18 +1026,18 @@ class MemoryStore:
     def list_entries(
         self,
         *,
-        agent_identity: Optional[str] = None,
-        target: Optional[str] = None,
+        agent_identity: str | None = None,
+        target: str | None = None,
         limit: int = 100,
         offset: int = 0,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """List entries in an agent's scope.
 
         agent_identity=None/empty → list across ALL agents (matches `search`
         and `count`). target=None → both stores.
         """
-        clauses: List[str] = []
-        params: List[Any] = []
+        clauses: list[str] = []
+        params: list[Any] = []
         if agent_identity:
             clauses.append("agent_identity = %s")
             params.append(agent_identity)
@@ -1049,7 +1048,7 @@ class MemoryStore:
         params.append(limit)
         params.append(offset)
 
-        with self._get_pool().connection() as conn:
+        with self._get_pool().connection() as conn:  # noqa: SIM117
             with conn.cursor(row_factory=dict_row) as cur:
                 cur.execute(
                     f"""
@@ -1067,18 +1066,18 @@ class MemoryStore:
     def search(
         self,
         *,
-        query_embedding: List[float],
-        agent_identity: Optional[str] = None,
-        target: Optional[str] = None,
+        query_embedding: list[float],
+        agent_identity: str | None = None,
+        target: str | None = None,
         limit: int = 5,
         min_similarity: float = 0.0,
         decay_half_life_days: float = 0.0,
         recall_boost_weight: float = 0.0,
-        platform: Optional[str] = None,
+        platform: str | None = None,
         min_confidence: float = 0.0,
         rerank: bool = False,
-        query_text: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
+        query_text: str | None = None,
+    ) -> list[dict[str, Any]]:
         """Semantic recall via cosine distance.
 
         agent_identity=None → search across ALL agents (cross-theme recall).
@@ -1086,8 +1085,8 @@ class MemoryStore:
         Returns rows with `score` = 1 - cosine_distance ∈ [0, 1].
         """
         vec_literal = to_hexus_literal(query_embedding)
-        clauses: List[str] = []
-        params: List[Any] = []
+        clauses: list[str] = []
+        params: list[Any] = []
         if agent_identity:
             clauses.append("agent_identity = %s")
             params.append(agent_identity)
@@ -1109,7 +1108,7 @@ class MemoryStore:
             db_limit = max(limit * 10, 50)
             if rerank:
                 db_limit = max(db_limit, 100)
-            with self._get_pool().connection() as conn:
+            with self._get_pool().connection() as conn:  # noqa: SIM117
                 with conn.cursor(row_factory=dict_row) as cur:
                     cur.execute(
                         f"""
@@ -1187,20 +1186,20 @@ class MemoryStore:
     def hybrid_search(
         self,
         *,
-        query_embedding: List[float],
+        query_embedding: list[float],
         query_text: str,
-        agent_identity: Optional[str] = None,
-        target: Optional[str] = None,
+        agent_identity: str | None = None,
+        target: str | None = None,
         limit: int = 5,
         vector_weight: float = 0.7,
         text_weight: float = 0.3,
         min_similarity: float = 0.0,
         decay_half_life_days: float = 0.0,
         recall_boost_weight: float = 0.0,
-        platform: Optional[str] = None,
+        platform: str | None = None,
         min_confidence: float = 0.0,
         rerank: bool = False,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Blend semantic vector search and full-text search."""
         if not query_text or not query_text.strip():
             rows = self.search(
@@ -1223,8 +1222,8 @@ class MemoryStore:
 
         vec_literal = to_hexus_literal(query_embedding)
 
-        clauses: List[str] = []
-        params: List[Any] = []
+        clauses: list[str] = []
+        params: list[Any] = []
         if agent_identity:
             clauses.append("agent_identity = %s")
             params.append(agent_identity)
@@ -1274,23 +1273,20 @@ class MemoryStore:
         LIMIT %s
         """
 
-        v_params = [vec_literal]
-        for p in params:
-            v_params.append(p)
-        v_params.extend([vec_literal, db_limit])
+        v_params = [vec_literal, *params, vec_literal, db_limit]
 
         t_params = [query_text, query_text] + params + [db_limit]
 
         all_params = v_params + t_params + [vector_weight, text_weight, db_limit]
 
-        with self._get_pool().connection() as conn:
+        with self._get_pool().connection() as conn:  # noqa: SIM117
             with conn.cursor(row_factory=dict_row) as cur:
                 cur.execute(sql, all_params)
                 rows = list(cur.fetchall())
 
         # Blended Score Calculation:
         # Combined Score = 0.6 * S_vector + 0.3 * S_BM25 + 0.1 * S_recency
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         for r in rows:
             ts_val = r.get("updated_at") or r.get("ts") or r.get("created_at")
             if isinstance(ts_val, str):
@@ -1298,11 +1294,11 @@ class MemoryStore:
                     from datetime import datetime as dt
 
                     ts_val = dt.fromisoformat(ts_val)
-                except Exception:
+                except Exception:  # noqa: BLE001, S110
                     pass
             if ts_val:
                 if ts_val.tzinfo is None:
-                    ts_val = ts_val.replace(tzinfo=timezone.utc)
+                    ts_val = ts_val.replace(tzinfo=UTC)
                 age_days = (now - ts_val).total_seconds() / 86400.0
                 if decay_half_life_days > 0.0:
                     r["recency_score"] = math.exp(
@@ -1348,8 +1344,8 @@ class MemoryStore:
         return rows
 
     def fetch_full(
-        self, memory_id: int, agent_identity: Optional[str] = None
-    ) -> Optional[str]:
+        self, memory_id: int, agent_identity: str | None = None
+    ) -> str | None:
         """Fetch the original full content of a memory entry, checking CCRCache first.
 
         When isolation is 'strict' and an `agent_identity` is supplied, the
@@ -1365,7 +1361,7 @@ class MemoryStore:
             if cached is not None:
                 return cached
 
-        with self._get_pool().connection() as conn:
+        with self._get_pool().connection() as conn:  # noqa: SIM117
             with conn.cursor() as cur:
                 if scoped:
                     cur.execute(
@@ -1396,9 +1392,9 @@ class MemoryStore:
         *,
         agent_identity: str,
         target: str,
-        file_path: "Path | str",
+        file_path: Path | str,
         embed_fn,
-    ) -> Dict[str, int]:
+    ) -> dict[str, int]:
         """Parse a MEMORY.md / USER.md file and upsert each entry.
 
         Idempotent + cheap on re-run: we SELECT the existing content set
@@ -1426,7 +1422,7 @@ class MemoryStore:
 
         # Single bulk SELECT of existing content for this scope. Beats N+1
         # by a wide margin and keeps re-init nearly free.
-        with self._get_pool().connection() as conn:
+        with self._get_pool().connection() as conn:  # noqa: SIM117
             with conn.cursor() as cur:
                 cur.execute(
                     "SELECT content FROM memory_entries WHERE agent_identity = %s AND target = %s",
@@ -1443,7 +1439,7 @@ class MemoryStore:
             vec = None
             try:
                 vec = embed_fn(entry) if embed_fn else None
-            except Exception:  # noqa: BLE001 — fail-soft on bulk embed
+            except Exception:  # noqa: BLE001  # noqa: BLE001 — fail-soft on bulk embed
                 vec = None
             row_id = self.add(
                 agent_identity=agent_identity,
@@ -1468,8 +1464,8 @@ class MemoryStore:
         agent_identity: str,
         role: str,
         content: str,
-        embedding: Optional[List[float]] = None,
-        metadata: Optional[Dict[str, Any]] = None,
+        embedding: list[float] | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> int:
         """Insert one chat turn. Returns row id.
 
@@ -1484,7 +1480,7 @@ class MemoryStore:
         meta_json = json.dumps(meta)
         vec_literal = to_hexus_literal(embedding) if embedding is not None else None
 
-        with self._get_pool().connection() as conn:
+        with self._get_pool().connection() as conn:  # noqa: SIM117
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -1502,19 +1498,19 @@ class MemoryStore:
     def search_turns(
         self,
         *,
-        query_embedding: List[float],
-        agent_identity: Optional[str] = None,
-        session_id: Optional[str] = None,
+        query_embedding: list[float],
+        agent_identity: str | None = None,
+        session_id: str | None = None,
         limit: int = 5,
         min_similarity: float = 0.0,
         decay_half_life_days: float = 0.0,
         recall_boost_weight: float = 0.0,
-        platform: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
+        platform: str | None = None,
+    ) -> list[dict[str, Any]]:
         """Semantic recall over conversation turns. Same shape as `search()`."""
         vec_literal = to_hexus_literal(query_embedding)
-        clauses: List[str] = []
-        params: List[Any] = []
+        clauses: list[str] = []
+        params: list[Any] = []
         if agent_identity:
             clauses.append("agent_identity = %s")
             params.append(agent_identity)
@@ -1534,7 +1530,7 @@ class MemoryStore:
 
         if self._vector_precision == "binary":
             db_limit = max(limit * 10, 50)
-            with self._get_pool().connection() as conn:
+            with self._get_pool().connection() as conn:  # noqa: SIM117
                 with conn.cursor(row_factory=dict_row) as cur:
                     cur.execute(
                         f"""
@@ -1549,7 +1545,7 @@ class MemoryStore:
                     )
                     rows = list(cur.fetchall())
         else:
-            with self._get_pool().connection() as conn:
+            with self._get_pool().connection() as conn:  # noqa: SIM117
                 with conn.cursor(row_factory=dict_row) as cur:
                     cur.execute(
                         f"""
@@ -1586,18 +1582,18 @@ class MemoryStore:
     def hybrid_search_turns(
         self,
         *,
-        query_embedding: List[float],
+        query_embedding: list[float],
         query_text: str,
-        agent_identity: Optional[str] = None,
-        session_id: Optional[str] = None,
+        agent_identity: str | None = None,
+        session_id: str | None = None,
         limit: int = 5,
         vector_weight: float = 0.7,
         text_weight: float = 0.3,
         min_similarity: float = 0.0,
         decay_half_life_days: float = 0.0,
         recall_boost_weight: float = 0.0,
-        platform: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
+        platform: str | None = None,
+    ) -> list[dict[str, Any]]:
         """Blend semantic vector search and full-text search over conversation turns."""
         if not query_text or not query_text.strip():
             rows = self.search_turns(
@@ -1616,8 +1612,8 @@ class MemoryStore:
             return rows
 
         vec_literal = to_hexus_literal(query_embedding)
-        clauses: List[str] = []
-        params: List[Any] = []
+        clauses: list[str] = []
+        params: list[Any] = []
         if agent_identity:
             clauses.append("agent_identity = %s")
             params.append(agent_identity)
@@ -1664,16 +1660,13 @@ class MemoryStore:
         LIMIT %s
         """
 
-        v_params = [vec_literal]
-        for p in params:
-            v_params.append(p)
-        v_params.extend([vec_literal, limit])
+        v_params = [vec_literal, *params, vec_literal, limit]
 
         t_params = [query_text, query_text] + params + [limit]
 
         all_params = v_params + t_params + [vector_weight, text_weight, limit]
 
-        with self._get_pool().connection() as conn:
+        with self._get_pool().connection() as conn:  # noqa: SIM117
             with conn.cursor(row_factory=dict_row) as cur:
                 cur.execute(sql, all_params)
                 rows = list(cur.fetchall())
@@ -1701,13 +1694,13 @@ class MemoryStore:
         agent_identity: str = "default",
         task: str,
         result: str,
-        embedding: Optional[List[float]] = None,
-        metadata: Optional[Dict[str, Any]] = None,
+        embedding: list[float] | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> int:
         """Insert a delegation entry. Returns row id."""
         vec_literal = to_hexus_literal(embedding) if embedding is not None else None
         meta_json = json.dumps(metadata or {})
-        with self._get_pool().connection() as conn:
+        with self._get_pool().connection() as conn:  # noqa: SIM117
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -1733,19 +1726,19 @@ class MemoryStore:
     def search_delegations(
         self,
         *,
-        query_embedding: List[float],
-        agent_identity: Optional[str] = None,
-        parent_session_id: Optional[str] = None,
+        query_embedding: list[float],
+        agent_identity: str | None = None,
+        parent_session_id: str | None = None,
         limit: int = 5,
         min_similarity: float = 0.0,
         decay_half_life_days: float = 0.0,
         recall_boost_weight: float = 0.0,
-        platform: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
+        platform: str | None = None,
+    ) -> list[dict[str, Any]]:
         """Semantic recall over delegations."""
         vec_literal = to_hexus_literal(query_embedding)
-        clauses: List[str] = []
-        params: List[Any] = []
+        clauses: list[str] = []
+        params: list[Any] = []
         if agent_identity:
             clauses.append("agent_identity = %s")
             params.append(agent_identity)
@@ -1765,7 +1758,7 @@ class MemoryStore:
 
         if self._vector_precision == "binary":
             db_limit = max(limit * 10, 50)
-            with self._get_pool().connection() as conn:
+            with self._get_pool().connection() as conn:  # noqa: SIM117
                 with conn.cursor(row_factory=dict_row) as cur:
                     cur.execute(
                         f"""
@@ -1780,7 +1773,7 @@ class MemoryStore:
                     )
                     rows = list(cur.fetchall())
         else:
-            with self._get_pool().connection() as conn:
+            with self._get_pool().connection() as conn:  # noqa: SIM117
                 with conn.cursor(row_factory=dict_row) as cur:
                     cur.execute(
                         f"""
@@ -1817,11 +1810,11 @@ class MemoryStore:
     def cleanup_stale_records(
         self,
         *,
-        conversations_ttl_days: Optional[int] = None,
-        memories_ttl_days: Optional[int] = None,
-        delegations_ttl_days: Optional[int] = None,
+        conversations_ttl_days: int | None = None,
+        memories_ttl_days: int | None = None,
+        delegations_ttl_days: int | None = None,
         dry_run: bool = False,
-    ) -> Dict[str, int]:
+    ) -> dict[str, int]:
         """Delete records older than the specified TTL. Returns counts of
         deleted items.
 
@@ -1837,12 +1830,12 @@ class MemoryStore:
             ("memory_entries", "updated_at", memories_ttl_days),
             ("delegations", "ts", delegations_ttl_days),
         ]
-        with self._get_pool().connection() as conn:
+        with self._get_pool().connection() as conn:  # noqa: SIM117
             with conn.cursor() as cur:
                 for table, ts_col, ttl in targets:
                     if ttl is None or ttl <= 0:
                         continue
-                    limit_date = datetime.now(timezone.utc) - timedelta(days=ttl)
+                    limit_date = datetime.now(UTC) - timedelta(days=ttl)
                     assert table in {
                         "conversations",
                         "memory_entries",
@@ -1873,11 +1866,11 @@ class MemoryStore:
     def count_turns(
         self,
         *,
-        agent_identity: Optional[str] = None,
-        session_id: Optional[str] = None,
+        agent_identity: str | None = None,
+        session_id: str | None = None,
     ) -> int:
-        clauses: List[str] = []
-        params: List[Any] = []
+        clauses: list[str] = []
+        params: list[Any] = []
         if agent_identity:
             clauses.append("agent_identity = %s")
             params.append(agent_identity)
@@ -1885,7 +1878,7 @@ class MemoryStore:
             clauses.append("session_id = %s")
             params.append(session_id)
         where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
-        with self._get_pool().connection() as conn:
+        with self._get_pool().connection() as conn:  # noqa: SIM117
             with conn.cursor() as cur:
                 cur.execute(f"SELECT COUNT(*) FROM conversations {where}", params)
                 return int(cur.fetchone()[0])
@@ -1893,11 +1886,11 @@ class MemoryStore:
     def count(
         self,
         *,
-        agent_identity: Optional[str] = None,
-        target: Optional[str] = None,
+        agent_identity: str | None = None,
+        target: str | None = None,
     ) -> int:
-        clauses: List[str] = []
-        params: List[Any] = []
+        clauses: list[str] = []
+        params: list[Any] = []
         if agent_identity:
             clauses.append("agent_identity = %s")
             params.append(agent_identity)
@@ -1906,15 +1899,15 @@ class MemoryStore:
             params.append(target)
         where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
 
-        with self._get_pool().connection() as conn:
+        with self._get_pool().connection() as conn:  # noqa: SIM117
             with conn.cursor() as cur:
                 cur.execute(f"SELECT COUNT(*) FROM memory_entries {where}", params)
                 return int(cur.fetchone()[0])
 
-    def health(self) -> Dict[str, Any]:
+    def health(self) -> dict[str, Any]:
         """Liveness probe — pool reachable + table exists. Never raises."""
         try:
-            with self._get_pool().connection(timeout=3.0) as conn:
+            with self._get_pool().connection(timeout=3.0) as conn:  # noqa: SIM117
                 with conn.cursor() as cur:
                     cur.execute("SELECT to_regclass('memory_entries') IS NOT NULL")
                     has_table = bool(cur.fetchone()[0])
@@ -1933,7 +1926,7 @@ class MemoryStore:
         except Exception as exc:  # noqa: BLE001
             return {"ok": False, "error": str(exc)[:200], "row_count": 0}
 
-    def get_metrics_data(self) -> Dict[str, Any]:
+    def get_metrics_data(self) -> dict[str, Any]:
         """Fetch detailed metrics from the database for Prometheus output."""
         data = {
             "memory_entries": [],
@@ -1948,13 +1941,13 @@ class MemoryStore:
         }
 
         # Helper to execute query and return list of rows
-        def query_safe(sql: str, params: Optional[list] = None) -> list:
+        def query_safe(sql: str, params: list | None = None) -> list:
             try:
-                with self._get_pool().connection() as conn:
+                with self._get_pool().connection() as conn:  # noqa: SIM117
                     with conn.cursor(row_factory=dict_row) as cur:
                         cur.execute(sql, params or [])
                         return list(cur.fetchall())
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 logger.warning("Metrics query failed (%s): %s", sql[:50], exc)
                 return []
 
@@ -2042,8 +2035,8 @@ class MemoryStore:
         return data
 
     def _apply_recall_boost(
-        self, rows: List[Dict[str, Any]], boost_weight: float
-    ) -> List[Dict[str, Any]]:
+        self, rows: list[dict[str, Any]], boost_weight: float
+    ) -> list[dict[str, Any]]:
         if boost_weight <= 0.0:
             return rows
         for r in rows:
@@ -2057,11 +2050,11 @@ class MemoryStore:
         return rows
 
     def _apply_temporal_decay(
-        self, rows: List[Dict[str, Any]], half_life_days: float
-    ) -> List[Dict[str, Any]]:
+        self, rows: list[dict[str, Any]], half_life_days: float
+    ) -> list[dict[str, Any]]:
         if half_life_days <= 0.0:
             return rows
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         for r in rows:
             ts_val = r.get("updated_at") or r.get("ts") or r.get("created_at")
             if isinstance(ts_val, str):
@@ -2069,14 +2062,14 @@ class MemoryStore:
                     from datetime import datetime as dt
 
                     ts_val = dt.fromisoformat(ts_val)
-                except Exception:
+                except Exception:  # noqa: BLE001, S112
                     continue
             if not ts_val:
                 continue
 
             # Ensure ts_val has timezone info (psycopg datetimes are timezone-aware, now is utc)
             if ts_val.tzinfo is None:
-                ts_val = ts_val.replace(tzinfo=timezone.utc)
+                ts_val = ts_val.replace(tzinfo=UTC)
 
             age_days = (now - ts_val).total_seconds() / 86400.0
             # exponential decay: score * 2^(-age/half_life)
@@ -2085,8 +2078,8 @@ class MemoryStore:
         return rows
 
     def _apply_min_confidence(
-        self, rows: List[Dict[str, Any]], min_confidence: float
-    ) -> List[Dict[str, Any]]:
+        self, rows: list[dict[str, Any]], min_confidence: float
+    ) -> list[dict[str, Any]]:
         if min_confidence <= 0.0:
             return rows
         filtered = []
@@ -2109,9 +2102,7 @@ class MemoryStore:
                 filtered.append(r)
         return filtered
 
-    def confirm_entry(
-        self, entry_id: int, agent_identity: Optional[str] = None
-    ) -> bool:
+    def confirm_entry(self, entry_id: int, agent_identity: str | None = None) -> bool:
         """Increment confirm_count in metadata JSONB for the given entry ID.
 
         When `agent_identity` is supplied the mutation is scoped to that agent,
@@ -2120,7 +2111,7 @@ class MemoryStore:
         """
         return self._bump_entry_count(entry_id, "confirm_count", agent_identity)
 
-    def reject_entry(self, entry_id: int, agent_identity: Optional[str] = None) -> bool:
+    def reject_entry(self, entry_id: int, agent_identity: str | None = None) -> bool:
         """Increment reject_count in metadata JSONB for the given entry ID.
 
         Scoped to `agent_identity` when supplied — see `confirm_entry`.
@@ -2128,7 +2119,7 @@ class MemoryStore:
         return self._bump_entry_count(entry_id, "reject_count", agent_identity)
 
     def _bump_entry_count(
-        self, entry_id: int, field: str, agent_identity: Optional[str]
+        self, entry_id: int, field: str, agent_identity: str | None
     ) -> bool:
         # `field` is one of the fixed literals passed by confirm/reject above,
         # never caller input, so interpolating it into the JSONB path is safe.
@@ -2143,18 +2134,18 @@ class MemoryStore:
         )
         WHERE id = %s
         """
-        params: List[Any] = [entry_id]
+        params: list[Any] = [entry_id]
         if agent_identity is not None:
             sql += "  AND agent_identity = %s\n"
             params.append(agent_identity)
-        with self._get_pool().connection() as conn:
+        with self._get_pool().connection() as conn:  # noqa: SIM117
             with conn.cursor() as cur:
                 cur.execute(sql, tuple(params))
                 updated = cur.rowcount
                 conn.commit()
                 return updated > 0
 
-    def increment_recall_counts(self, table: str, ids: List[int]) -> None:
+    def increment_recall_counts(self, table: str, ids: list[int]) -> None:
         if not ids:
             return
         if table not in _RECALL_COUNT_TABLES:
@@ -2173,11 +2164,11 @@ class MemoryStore:
         WHERE id = ANY(%s)
         """
         try:
-            with self._get_pool().connection() as conn:
+            with self._get_pool().connection() as conn:  # noqa: SIM117
                 with conn.cursor() as cur:
                     cur.execute(sql, (ids,))
                     conn.commit()
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             logger.warning("Failed to increment recall counts for %s: %s", table, exc)
 
     def entity_graph(
@@ -2185,9 +2176,9 @@ class MemoryStore:
         *,
         entity_type: str,
         entity_value: str,
-        agent_identity: Optional[str] = None,
+        agent_identity: str | None = None,
         limit: int = 5,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Find other entities that co-occur with the given entity."""
         query_entity_json = json.dumps([{"type": entity_type, "value": entity_value}])
 
@@ -2222,7 +2213,7 @@ class MemoryStore:
             entity_value,
             limit,
         ]
-        with self._get_pool().connection() as conn:
+        with self._get_pool().connection() as conn:  # noqa: SIM117
             with conn.cursor(row_factory=dict_row) as cur:
                 cur.execute(sql, params)
                 related = list(cur.fetchall())
@@ -2236,10 +2227,10 @@ class MemoryStore:
         *,
         entity_type: str,
         entity_value: str,
-        agent_identity: Optional[str] = None,
+        agent_identity: str | None = None,
         max_depth: int = 2,
         limit: int = 5,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Perform recursive CTE path traversal from a start entity."""
         sql = """
         WITH RECURSIVE graph_walk AS (
@@ -2297,7 +2288,7 @@ class MemoryStore:
             entity_value,
             limit,
         ]
-        with self._get_pool().connection() as conn:
+        with self._get_pool().connection() as conn:  # noqa: SIM117
             with conn.cursor(row_factory=dict_row) as cur:
                 cur.execute(sql, params)
                 return list(cur.fetchall())
@@ -2305,10 +2296,10 @@ class MemoryStore:
     def common_topics(
         self,
         *,
-        agent_identity: Optional[str] = None,
+        agent_identity: str | None = None,
         min_strength: int = 2,
         limit: int = 10,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Find clusters of heavily co-occurring entities/topics."""
         sql = """
         SELECT 
@@ -2328,7 +2319,7 @@ class MemoryStore:
         LIMIT %s
         """
         params = [agent_identity, agent_identity, min_strength, limit]
-        with self._get_pool().connection() as conn:
+        with self._get_pool().connection() as conn:  # noqa: SIM117
             with conn.cursor(row_factory=dict_row) as cur:
                 cur.execute(sql, params)
                 return list(cur.fetchall())
@@ -2338,8 +2329,8 @@ class MemoryStore:
         *,
         session_id: str,
         limit: int = 5,
-        agent_identity: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        agent_identity: str | None = None,
+    ) -> dict[str, Any]:
         """Compute the vector centroid of a session's turns and find the K closest turns.
 
         When `agent_identity` is supplied the session lookup is scoped to that
@@ -2397,13 +2388,14 @@ class MemoryStore:
     # that runs when the agent is idle to group/summarize low-confidence or heavily co-occurring memory entries.
 
     def consolidate_low_confidence_memories(
-        self, agent_identity: Optional[str] = None
-    ) -> Dict[str, Any]:
+        self, agent_identity: str | None = None
+    ) -> dict[str, Any]:
         """Query low-confidence (frequently rejected) memories and send them to the LLM for pruning/merging."""
         import json
-        import urllib.request
-        import urllib.error
         import os
+        import urllib.error
+        import urllib.request
+
         from hexus.store import dict_row
 
         api_base = os.environ.get("LLM_API_BASE") or "http://headroom:8787/v1"
@@ -2435,14 +2427,14 @@ class MemoryStore:
             params.append(agent_identity)
         query += " LIMIT 20"
 
-        with self._get_pool().connection() as conn:
-            with (
-                conn.cursor(row_factory=dict_row)
-                if hasattr(conn, "cursor")
-                else conn.cursor() as cur
-            ):
-                cur.execute(query, params)
-                rows = list(cur.fetchall())
+        with (
+            self._get_pool().connection() as conn,
+            conn.cursor(row_factory=dict_row)
+            if hasattr(conn, "cursor")
+            else conn.cursor() as cur,
+        ):
+            cur.execute(query, params)
+            rows = list(cur.fetchall())
 
         if not rows:
             return {"status": "ok", "processed": 0, "deletions": 0, "replacements": 0}
@@ -2493,7 +2485,7 @@ class MemoryStore:
             with urllib.request.urlopen(req, timeout=30) as resp:
                 resp_data = json.loads(resp.read().decode("utf-8"))
                 llm_response = resp_data["choices"][0]["message"]["content"].strip()
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             logger.error(
                 "Failed to query LLM for low-confidence memory consolidation: %s", exc
             )
@@ -2509,7 +2501,7 @@ class MemoryStore:
                     lines = lines[:-1]
                 llm_response = "\n".join(lines).strip()
             data = json.loads(llm_response)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             logger.error(
                 "Failed to parse LLM consolidation response JSON: %s. Response: %r",
                 exc,
@@ -2527,7 +2519,7 @@ class MemoryStore:
         if deletions:
             valid_del_ids = [r["id"] for r in rows if r["id"] in deletions]
             if valid_del_ids:
-                with self._get_pool().connection() as conn:
+                with self._get_pool().connection() as conn:  # noqa: SIM117
                     with conn.cursor() as cur:
                         cur.execute(
                             "DELETE FROM memory_entries WHERE id = ANY(%s)",
@@ -2544,7 +2536,7 @@ class MemoryStore:
 
             valid_rep_ids = [r["id"] for r in rows if r["id"] in rep_ids]
             if valid_rep_ids and rep_content:
-                with self._get_pool().connection() as conn:
+                with self._get_pool().connection() as conn:  # noqa: SIM117
                     with conn.cursor() as cur:
                         cur.execute(
                             "DELETE FROM memory_entries WHERE id = ANY(%s)",
@@ -2568,13 +2560,14 @@ class MemoryStore:
         }
 
     def consolidate_cooccurring_memories(
-        self, agent_identity: Optional[str] = None
-    ) -> Dict[str, Any]:
+        self, agent_identity: str | None = None
+    ) -> dict[str, Any]:
         """Query clusters of co-occurring entities and consolidate their memories using the LLM."""
         import json
-        import urllib.request
-        import urllib.error
         import os
+        import urllib.error
+        import urllib.request
+
         from hexus.store import dict_row
 
         api_base = os.environ.get("LLM_API_BASE") or "http://headroom:8787/v1"
@@ -2615,14 +2608,14 @@ class MemoryStore:
             meta_b = json.dumps({"entities": [{"type": type_b, "value": val_b}]})
             params = [agent_identity, agent_identity, meta_a, meta_b]
 
-            with self._get_pool().connection() as conn:
-                with (
-                    conn.cursor(row_factory=dict_row)
-                    if hasattr(conn, "cursor")
-                    else conn.cursor() as cur
-                ):
-                    cur.execute(query, params)
-                    rows = list(cur.fetchall())
+            with (
+                self._get_pool().connection() as conn,
+                conn.cursor(row_factory=dict_row)
+                if hasattr(conn, "cursor")
+                else conn.cursor() as cur,
+            ):
+                cur.execute(query, params)
+                rows = list(cur.fetchall())
 
             rows = [r for r in rows if r["id"] not in processed_ids]
 
@@ -2675,7 +2668,7 @@ class MemoryStore:
                 with urllib.request.urlopen(req, timeout=30) as resp:
                     resp_data = json.loads(resp.read().decode("utf-8"))
                     llm_response = resp_data["choices"][0]["message"]["content"].strip()
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 logger.error("Failed to query LLM for topic consolidation: %s", exc)
                 continue
 
@@ -2688,7 +2681,7 @@ class MemoryStore:
                         lines = lines[:-1]
                     llm_response = "\n".join(lines).strip()
                 data = json.loads(llm_response)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 logger.error(
                     "Failed to parse LLM topic consolidation JSON: %s. Response: %r",
                     exc,
@@ -2702,7 +2695,7 @@ class MemoryStore:
 
             valid_ids = [r["id"] for r in rows if r["id"] in ids_to_replace]
             if len(valid_ids) >= 2 and consolidated_content:
-                with self._get_pool().connection() as conn:
+                with self._get_pool().connection() as conn:  # noqa: SIM117
                     with conn.cursor() as cur:
                         cur.execute(
                             "DELETE FROM memory_entries WHERE id = ANY(%s)",

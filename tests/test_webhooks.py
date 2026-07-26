@@ -2,17 +2,22 @@ import hashlib
 import hmac
 import json
 import threading
-from http.server import HTTPServer, BaseHTTPRequestHandler
-from typing import List, Dict, Any
-from unittest.mock import patch, MagicMock
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from typing import Any
+from unittest.mock import MagicMock, patch
 
 import pytest
-from hexus.webhook.dispatcher import sign_payload, dispatch_webhook_sync
+
+from hexus.webhook.dispatcher import dispatch_webhook_sync, sign_payload
 
 
 class MockWebhookHandler(BaseHTTPRequestHandler):
-    requests_received: List[Dict[str, Any]] = []
+    requests_received: list[dict[str, Any]] | None = None
     response_status = 200
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.requests_received = []
 
     def do_POST(self):
         content_length = int(self.headers.get("Content-Length", 0))
@@ -21,7 +26,7 @@ class MockWebhookHandler(BaseHTTPRequestHandler):
         # Parse payload
         try:
             payload = json.loads(body.decode("utf-8"))
-        except Exception:
+        except Exception:  # noqa: BLE001
             payload = None
 
         MockWebhookHandler.requests_received.append(
@@ -131,8 +136,8 @@ def test_provider_worker_dispatches_webhooks(mock_sleep, mock_webhook_server):
     url, handler = mock_webhook_server
 
     from hexus import HexusMemoryProvider
-    from hexus.writer import _PendingWrite
     from hexus.webhook.dispatcher import dispatch_webhook_sync
+    from hexus.writer import _PendingWrite
 
     provider = HexusMemoryProvider(
         config={
@@ -202,9 +207,10 @@ def test_provider_worker_dispatches_webhooks(mock_sleep, mock_webhook_server):
 def test_mcp_tools_dispatch_webhooks(mock_sleep, mock_webhook_server):
     url, handler = mock_webhook_server
 
+    import os
+
     from hexus.store import MemoryStore
     from mcp_server import tools
-    import os
 
     # Setup test environment DSN
     dsn = os.environ.get("PG_TEST_DSN")
@@ -216,57 +222,59 @@ def test_mcp_tools_dispatch_webhooks(mock_sleep, mock_webhook_server):
     agent = "pytest-mcp-webhook-" + os.urandom(4).hex()
 
     # Configure webhooks via environment variables
-    with patch.dict(
-        "os.environ",
-        {
-            "HEXUS_WEBHOOK_URL": url,
-            "HEXUS_WEBHOOK_SECRET": "mcp_secret",
-            "HEXUS_AGENT_IDENTITY": agent,
-        },
-    ):
-        with patch(
+    with (  # noqa: SIM117
+        patch.dict(
+            "os.environ",
+            {
+                "HEXUS_WEBHOOK_URL": url,
+                "HEXUS_WEBHOOK_SECRET": "mcp_secret",
+                "HEXUS_AGENT_IDENTITY": agent,
+            },
+        ),
+        patch(
             "hexus.webhook.dispatcher.dispatch_webhook",
             side_effect=dispatch_webhook_sync,
-        ):
-            # 1. Test memory_retain tool triggers webhook
-            with patch("mcp_server.tools._embed_batch", return_value=[[0.1] * 384]):
-                res = tools.memory_retain(
-                    store,
-                    {
-                        "contents": ["Hello from MCP server webhook test"],
-                        "target": "memory",
-                        "agent_identity": agent,
-                    },
-                )
-                assert res["inserted"] == 1
+        ),
+    ):
+        # 1. Test memory_retain tool triggers webhook
+        with patch("mcp_server.tools._embed_batch", return_value=[[0.1] * 384]):
+            res = tools.memory_retain(
+                store,
+                {
+                    "contents": ["Hello from MCP server webhook test"],
+                    "target": "memory",
+                    "agent_identity": agent,
+                },
+            )
+            assert res["inserted"] == 1
 
-                assert len(handler.requests_received) == 1
-                req = handler.requests_received[-1]
-                assert req["headers"]["X-Hexus-Event"] == "memory_retain"
-                assert (
-                    req["payload"]["data"]["content"]
-                    == "Hello from MCP server webhook test"
-                )
+            assert len(handler.requests_received) == 1
+            req = handler.requests_received[-1]
+            assert req["headers"]["X-Hexus-Event"] == "memory_retain"
+            assert (
+                req["payload"]["data"]["content"]
+                == "Hello from MCP server webhook test"
+            )
 
-                # Find the row ID to delete it
-                with store._get_pool().connection() as conn:
-                    with conn.cursor() as cur:
-                        cur.execute(
-                            "SELECT id FROM memory_entries WHERE agent_identity = %s",
-                            (agent,),
-                        )
-                        row_id = cur.fetchone()[0]
+            # Find the row ID to delete it
+            with store._get_pool().connection() as conn:  # noqa: SIM117
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT id FROM memory_entries WHERE agent_identity = %s",
+                        (agent,),
+                    )
+                    row_id = cur.fetchone()[0]
 
-                # 2. Test memory_forget tool triggers webhook
-                forget_res = tools.memory_forget(
-                    store, {"id": row_id, "confirm": True, "agent_identity": agent}
-                )
-                assert forget_res["deleted"] == 1
+            # 2. Test memory_forget tool triggers webhook
+            forget_res = tools.memory_forget(
+                store, {"id": row_id, "confirm": True, "agent_identity": agent}
+            )
+            assert forget_res["deleted"] == 1
 
-                assert len(handler.requests_received) == 2
-                req = handler.requests_received[-1]
-                assert req["headers"]["X-Hexus-Event"] == "memory_forget"
-                assert (
-                    req["payload"]["data"]["content"]
-                    == "Hello from MCP server webhook test"
-                )
+            assert len(handler.requests_received) == 2
+            req = handler.requests_received[-1]
+            assert req["headers"]["X-Hexus-Event"] == "memory_forget"
+            assert (
+                req["payload"]["data"]["content"]
+                == "Hello from MCP server webhook test"
+            )

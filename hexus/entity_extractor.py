@@ -1,5 +1,4 @@
 import re
-from typing import List, Dict
 
 DEFAULT_PATTERNS = {
     "url": r'https?://[^\s<>"]+',
@@ -14,12 +13,12 @@ DEFAULT_PATTERNS = {
 
 
 class EntityExtractor:
-    def __init__(self, patterns: Dict[str, str] = None, enabled: bool = True):
+    def __init__(self, patterns: dict[str, str] | None = None, enabled: bool = True):
         self.enabled = enabled
         self.patterns = {**DEFAULT_PATTERNS, **(patterns or {})}
         self._compiled = {t: re.compile(p) for t, p in self.patterns.items()}
 
-    def extract_entities(self, text: str) -> List[Dict[str, str]]:
+    def extract_entities(self, text: str) -> list[dict[str, str]]:
         if not self.enabled or not text:
             return []
 

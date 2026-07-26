@@ -21,12 +21,11 @@ works with:
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, Optional, List
+import os
+from typing import Any
 
 from hexus.store import MemoryStore
 
-
-import os
 from . import tools
 
 logger = logging.getLogger(__name__)
@@ -35,6 +34,7 @@ logger = logging.getLogger(__name__)
 def _generate_metrics(store: MemoryStore) -> str:
     """Generate Prometheus metrics from DB and AsyncWriter status."""
     import math
+
     from hexus.writer import _active_writers
 
     # 1. Base liveness and totals
@@ -57,7 +57,7 @@ def _generate_metrics(store: MemoryStore) -> str:
     # 2. Detailed Database Metrics from store.get_metrics_data()
     try:
         db_data = store.get_metrics_data()
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         lines.append(f"# ERROR: Failed to query detailed metrics: {exc}")
         db_data = {}
 
@@ -225,7 +225,7 @@ def _generate_metrics(store: MemoryStore) -> str:
         for obj in _active_writers:
             queue_stats = obj.stats()
             break
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         lines.append(f"# ERROR: Failed to extract writer queue stats: {exc}")
 
     if queue_stats:
@@ -258,7 +258,7 @@ def _generate_metrics(store: MemoryStore) -> str:
             lines.append(f'hexus_writer_latency_seconds{{quantile="0.95"}} {p95}')
 
     # 4. Background Cleanup Stats
-    cleanup_interval = int(os.environ.get("HEXUS_CLEANUP_INTERVAL_HOURS", 24))
+    cleanup_interval = int(os.environ.get("HEXUS_CLEANUP_INTERVAL_HOURS", "24"))
     memories_ttl = os.environ.get("HEXUS_CLEANUP_MEMORIES_TTL_DAYS")
     memories_ttl = int(memories_ttl) if memories_ttl else None
     conversations_ttl = os.environ.get("HEXUS_CLEANUP_CONVERSATIONS_TTL_DAYS")
@@ -303,7 +303,7 @@ def _generate_metrics(store: MemoryStore) -> str:
 
     # 5. Background Consolidation Stats
     consolidation_interval = int(
-        os.environ.get("HEXUS_CONSOLIDATION_INTERVAL_HOURS", 12)
+        os.environ.get("HEXUS_CONSOLIDATION_INTERVAL_HOURS", "12")
     )
     consolidation_thread_alive = any(
         t.name == "hexus-consolidation-thread" for t in threading.enumerate()
@@ -421,7 +421,7 @@ def _build_server(
     store: MemoryStore,
     *,
     name: str = "hexus",
-    instructions: Optional[str] = None,
+    instructions: str | None = None,
 ):
     """Build and return a configured `mcp.server.fastmcp.FastMCP` instance.
 
@@ -433,6 +433,7 @@ def _build_server(
     # Imported lazily so `pip install hexus` (no [mcp] extra)
     # doesn't pull mcp as a transitive runtime dep.
     import os
+
     from mcp.server.fastmcp import FastMCP
 
     if instructions is None:
@@ -471,7 +472,7 @@ def _build_server(
     }
 
     # -- Scheduled Background Cleanup --------------------------------------
-    cleanup_interval = int(os.environ.get("HEXUS_CLEANUP_INTERVAL_HOURS", 24))
+    cleanup_interval = int(os.environ.get("HEXUS_CLEANUP_INTERVAL_HOURS", "24"))
     memories_ttl = os.environ.get("HEXUS_CLEANUP_MEMORIES_TTL_DAYS")
     memories_ttl = int(memories_ttl) if memories_ttl else None
     conversations_ttl = os.environ.get("HEXUS_CLEANUP_CONVERSATIONS_TTL_DAYS")
@@ -526,12 +527,13 @@ def _build_server(
 
     # -- Scheduled Background Consolidation --------------------------------
     consolidation_interval = int(
-        os.environ.get("HEXUS_CONSOLIDATION_INTERVAL_HOURS", 12)
+        os.environ.get("HEXUS_CONSOLIDATION_INTERVAL_HOURS", "12")
     )
 
     if consolidation_interval > 0:
         import threading
         import time
+
         from hexus.writer import _active_writers
 
         def background_consolidation_loop():
@@ -606,7 +608,7 @@ def _build_server(
                             res_co,
                         )
                         break  # Success
-                    except Exception as exc:
+                    except Exception as exc:  # noqa: BLE001
                         logger.error(
                             "Error during scheduled background consolidation (attempt %d/%d): %s",
                             attempt,
@@ -629,7 +631,7 @@ def _build_server(
     # -- tools -------------------------------------------------------------
 
     @mcp.tool()
-    def memory_health() -> Dict[str, Any]:
+    def memory_health() -> dict[str, Any]:
         """Liveness + capability check. Returns DB status, embedder model/dim, row counts."""
         return tools.memory_health(store, {})
 
@@ -638,10 +640,10 @@ def _build_server(
         contents: list[str],
         target: str = "memory",
         agent_identity: str = "",
-        metadata: Optional[Dict[str, Any]] = None,
+        metadata: dict[str, Any] | None = None,
         doc_type: str = "memory",
         source_url: str = "",
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Add one or many memory entries. Each content becomes one row.
 
         Args:
@@ -682,9 +684,9 @@ def _build_server(
         target: str = "",
         min_similarity: float = 0.0,
         min_confidence: float = 0.0,
-        decay_half_life_days: Optional[float] = None,
-        recall_boost_weight: Optional[float] = None,
-    ) -> Dict[str, Any]:
+        decay_half_life_days: float | None = None,
+        recall_boost_weight: float | None = None,
+    ) -> dict[str, Any]:
         """Semantic search over memory entries.
 
         Args:
@@ -725,9 +727,9 @@ def _build_server(
         target: str = "",
         min_similarity: float = 0.0,
         min_confidence: float = 0.0,
-        decay_half_life_days: Optional[float] = None,
-        recall_boost_weight: Optional[float] = None,
-    ) -> Dict[str, Any]:
+        decay_half_life_days: float | None = None,
+        recall_boost_weight: float | None = None,
+    ) -> dict[str, Any]:
         """Hybrid search blending semantic vector search and full-text search over memory entries.
 
         Args:
@@ -768,7 +770,7 @@ def _build_server(
         target: str = "",
         limit: int = 20,
         offset: int = 0,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Browse memory entries without semantic search (list / paginate).
 
         Returns: {"count", "limit", "offset", "rows": [...]}
@@ -788,7 +790,7 @@ def _build_server(
         id: int,
         confirm: bool = False,
         agent_identity: str = "",
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Delete a memory entry by id. Pass confirm=true to actually delete.
 
         Dry-run by default (returns what would happen). Restricted to the
@@ -811,9 +813,9 @@ def _build_server(
         agent_identity: str = "",
         session_id: str = "",
         min_similarity: float = 0.0,
-        decay_half_life_days: Optional[float] = None,
-        recall_boost_weight: Optional[float] = None,
-    ) -> Dict[str, Any]:
+        decay_half_life_days: float | None = None,
+        recall_boost_weight: float | None = None,
+    ) -> dict[str, Any]:
         """Semantic search over past chat turns (every user/assistant exchange).
 
         Args:
@@ -851,9 +853,9 @@ def _build_server(
         agent_identity: str = "",
         session_id: str = "",
         min_similarity: float = 0.0,
-        decay_half_life_days: Optional[float] = None,
-        recall_boost_weight: Optional[float] = None,
-    ) -> Dict[str, Any]:
+        decay_half_life_days: float | None = None,
+        recall_boost_weight: float | None = None,
+    ) -> dict[str, Any]:
         """Hybrid search blending semantic vector search and full-text search over conversation turns.
 
         Args:
@@ -893,8 +895,8 @@ def _build_server(
         role: str,
         content: str,
         agent_identity: str = "",
-        metadata: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """Append one chat turn. Use this to capture a (user, assistant)
         exchange into the conversation log for later semantic recall.
 
@@ -925,8 +927,8 @@ def _build_server(
         task: str,
         result: str,
         agent_identity: str = "",
-        metadata: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """Record a subagent delegation.
 
         Args:
@@ -960,7 +962,7 @@ def _build_server(
         min_similarity: float = 0.0,
         decay_half_life_days: float = 0.0,
         recall_boost_weight: float = 0.0,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Recall subagent delegations by semantic similarity query.
 
         Args:
@@ -992,7 +994,7 @@ def _build_server(
         agent_identity: str = "",
         target: str = "",
         session_id: str = "",
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Return row counts for memory_entries and conversations, scoped as requested.
 
         Args:
@@ -1013,11 +1015,11 @@ def _build_server(
 
     @mcp.tool()
     def memory_cleanup(
-        conversations_ttl_days: Optional[int] = None,
-        memories_ttl_days: Optional[int] = None,
-        delegations_ttl_days: Optional[int] = None,
+        conversations_ttl_days: int | None = None,
+        memories_ttl_days: int | None = None,
+        delegations_ttl_days: int | None = None,
         confirm: bool = False,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Delete stale records from conversations, memory_entries, and delegations based on TTL.
 
         This is a **fleet-wide, unscoped** destructive operation — it deletes
@@ -1060,7 +1062,7 @@ def _build_server(
     @mcp.tool()
     def memory_consolidate(
         agent_identity: str = "",
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Trigger memory consolidation for low-confidence or heavily co-occurring entries.
 
         Args:
@@ -1114,7 +1116,7 @@ def _build_server(
         entity_value: str,
         agent_identity: str = "",
         limit: int = 5,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Find other entities that co-occur with a target entity.
 
         Args:
@@ -1140,7 +1142,7 @@ def _build_server(
         agent_identity: str = "",
         max_depth: int = 2,
         limit: int = 5,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Traverse the co-occurrence graph up to N hops away from a start entity.
 
         Args:
@@ -1166,7 +1168,7 @@ def _build_server(
         agent_identity: str = "",
         min_strength: int = 2,
         limit: int = 10,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Retrieve clusters/cliques of heavily co-occurring entities.
 
         Args:
@@ -1184,7 +1186,7 @@ def _build_server(
         )
 
     @mcp.tool()
-    def memory_confirm(id: int) -> Dict[str, Any]:
+    def memory_confirm(id: int) -> dict[str, Any]:
         """Increment confirm_count in metadata JSONB for the given entry ID.
 
         Args:
@@ -1198,7 +1200,7 @@ def _build_server(
         )
 
     @mcp.tool()
-    def memory_reject(id: int) -> Dict[str, Any]:
+    def memory_reject(id: int) -> dict[str, Any]:
         """Increment reject_count in metadata JSONB for the given entry ID.
 
         Args:
@@ -1215,7 +1217,7 @@ def _build_server(
     def memory_summarize_session(
         session_id: str,
         limit: int = 5,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Compute the vector centroid of a session's turns and find the K closest turns.
 
         Args:
@@ -1231,7 +1233,7 @@ def _build_server(
         )
 
     @mcp.tool()
-    def memory_retrieve(id: int) -> Dict[str, Any]:
+    def memory_retrieve(id: int) -> dict[str, Any]:
         """Retrieve the original full content of a memory entry by its integer ID.
 
         Args:
@@ -1245,7 +1247,7 @@ def _build_server(
         )
 
     @mcp.tool()
-    def headroom_retrieve(id: int) -> Dict[str, Any]:
+    def headroom_retrieve(id: int) -> dict[str, Any]:
         """Retrieve the original full content of a memory entry by its integer ID.
 
         Args:
@@ -1259,7 +1261,7 @@ def _build_server(
         )
 
     @mcp.tool()
-    def memory_stats() -> Dict[str, Any]:
+    def memory_stats() -> dict[str, Any]:
         """Return metrics from Hexus database and background async queue stats."""
         return tools.memory_stats(store, {})
 
@@ -1268,8 +1270,8 @@ def _build_server(
 
     def get_asgi_app_with_rest_api(*args, **kwargs):
         app = _orig_get_asgi_app(*args, **kwargs)
-        from starlette.responses import JSONResponse
         from starlette.requests import Request
+        from starlette.responses import JSONResponse
 
         tools.http_transport_active = True
 
@@ -1318,17 +1320,24 @@ def _build_server(
             metadata = body.get("metadata")
 
             if not isinstance(contents, list) or not contents:
-                return JSONResponse({"error": "contents must be a non-empty list"}, status_code=400)
+                return JSONResponse(
+                    {"error": "contents must be a non-empty list"}, status_code=400
+                )
 
             # Normalize: support both string[] (new) and {content}[] (legacy)
             normalized = []
             for item in contents:
                 if isinstance(item, str):
-                    normalized.append({"content": item, "target": target, "metadata": metadata})
+                    normalized.append(
+                        {"content": item, "target": target, "metadata": metadata}
+                    )
                 elif isinstance(item, dict):
                     normalized.append(item)
                 else:
-                    return JSONResponse({"error": "contents items must be strings or objects"}, status_code=400)
+                    return JSONResponse(
+                        {"error": "contents items must be strings or objects"},
+                        status_code=400,
+                    )
 
             args = {"contents": normalized}
             if agent_identity:
@@ -1403,7 +1412,7 @@ def build_server(
     dsn: str,
     *,
     name: str = "hexus",
-    instructions: Optional[str] = None,
+    instructions: str | None = None,
 ) -> Any:
     """Build (but don't run) an MCP server for the given DSN.
 

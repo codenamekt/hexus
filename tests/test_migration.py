@@ -19,7 +19,6 @@ from pathlib import Path
 
 import pytest
 
-
 MIGRATION_PATH = (
     Path(__file__).resolve().parent.parent / "hexus" / "migrations" / "001_schema.sql"
 )
@@ -247,11 +246,14 @@ def test_insert_768_dim_vector_rejected(pg):
             "psql",
             pg,
             "-tAc",
-            f"INSERT INTO memory_entries (agent_identity, target, content, embedding) "
-            f"VALUES ('{agent}', 'memory', 'dim mismatch test', '{vec}'::vector)",
+            (
+                f"INSERT INTO memory_entries (agent_identity, target, content, embedding) "
+                f"VALUES ('{agent}', 'memory', 'dim mismatch test', '{vec}'::vector)"
+            ),
         ],
         capture_output=True,
         text=True,
+        check=False,
         env=_psql_env(pg),
     )
     assert result.returncode != 0, "DB accepted a 768-dim vector; expected rejection"

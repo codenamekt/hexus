@@ -25,36 +25,43 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Set, Tuple
 
 # Make `hexus` importable when run from repo root.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from hexus.store import MemoryStore  # noqa: E402
-
+from hexus.store import MemoryStore
 
 # ---------- data layer ----------
 
-def fetch_overview(store: MemoryStore, agent: str | None, min_strength: int, limit: int) -> Tuple[List[dict], List[dict]]:
+
+def fetch_overview(
+    store: MemoryStore, agent: str | None, min_strength: int, limit: int
+) -> tuple[list[dict], list[dict]]:
     """Constellation: all heavy co-occurrences, no seed required."""
     pairs = store.common_topics(
         agent_identity=agent, min_strength=min_strength, limit=limit
     )
-    nodes: Dict[str, dict] = {}
-    edges: List[dict] = []
+    nodes: dict[str, dict] = {}
+    edges: list[dict] = []
 
     for p in pairs:
         a_id = f"{p['type_a']}:{p['value_a']}"
         b_id = f"{p['type_b']}:{p['value_b']}"
-        nodes.setdefault(a_id, {"id": a_id, "type": p["type_a"], "value": p["value_a"], "weight": 0})
-        nodes.setdefault(b_id, {"id": b_id, "type": p["type_b"], "value": p["value_b"], "weight": 0})
+        nodes.setdefault(
+            a_id, {"id": a_id, "type": p["type_a"], "value": p["value_a"], "weight": 0}
+        )
+        nodes.setdefault(
+            b_id, {"id": b_id, "type": p["type_b"], "value": p["value_b"], "weight": 0}
+        )
         nodes[a_id]["weight"] += p["strength"]
         nodes[b_id]["weight"] += p["strength"]
-        edges.append({
-            "source": a_id,
-            "target": b_id,
-            "strength": p["strength"],
-        })
+        edges.append(
+            {
+                "source": a_id,
+                "target": b_id,
+                "strength": p["strength"],
+            }
+        )
 
     return list(nodes.values()), edges
 
@@ -66,7 +73,7 @@ def fetch_walk(
     agent: str | None,
     max_depth: int,
     limit: int,
-) -> Tuple[List[dict], List[dict]]:
+) -> tuple[list[dict], list[dict]]:
     """Recursive walk: edges reconstructed from per-hop results."""
     hops = store.graph_walk(
         entity_type=seed_type,
@@ -76,21 +83,31 @@ def fetch_walk(
         limit=limit,
     )
 
-    nodes: Dict[str, dict] = {}
-    edges: List[dict] = []
+    nodes: dict[str, dict] = {}
+    edges: list[dict] = []
     seed_id = f"{seed_type}:{seed_value}"
     nodes[seed_id] = {"id": seed_id, "type": seed_type, "value": seed_value, "depth": 0}
 
     for h in hops:
         nid = f"{h['type']}:{h['value']}"
-        nodes.setdefault(nid, {"id": nid, "type": h["type"], "value": h["value"], "depth": h["min_depth"]})
+        nodes.setdefault(
+            nid,
+            {
+                "id": nid,
+                "type": h["type"],
+                "value": h["value"],
+                "depth": h["min_depth"],
+            },
+        )
         nodes[nid]["depth"] = min(nodes[nid].get("depth", 99), h["min_depth"])
-        edges.append({
-            "source": seed_id,
-            "target": nid,
-            "depth": h["min_depth"],
-            "occurrences": h["occurrences"],
-        })
+        edges.append(
+            {
+                "source": seed_id,
+                "target": nid,
+                "depth": h["min_depth"],
+                "occurrences": h["occurrences"],
+            }
+        )
 
     return list(nodes.values()), edges
 
@@ -247,22 +264,37 @@ function escapeHtml(s) {{ return s.replace(/[&<>"']/g, c => ({{"&":"&amp;","<":"
 """
 
 
-def render_html(nodes: List[dict], edges: List[dict], subtitle: str) -> str:
+def render_html(nodes: list[dict], edges: list[dict], subtitle: str) -> str:
     payload = {"nodes": nodes, "edges": edges}
     return HTML_TEMPLATE.format(subtitle=subtitle, data_json=json.dumps(payload))
 
 
 # ---------- CLI ----------
 
+
 def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--dsn", default=os.environ.get("HEXUS_DSN"),
-                    help="Postgres DSN (default: $HEXUS_DSN)")
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    ap.add_argument(
+        "--dsn",
+        default=os.environ.get("HEXUS_DSN"),
+        help="Postgres DSN (default: $HEXUS_DSN)",
+    )
     ap.add_argument("--agent", default=None, help="Filter to one agent_identity")
-    ap.add_argument("--seed", nargs=2, metavar=("TYPE", "VALUE"),
-                    help="Walk mode: graph_walk from <type>:<value>")
+    ap.add_argument(
+        "--seed",
+        nargs=2,
+        metavar=("TYPE", "VALUE"),
+        help="Walk mode: graph_walk from <type>:<value>",
+    )
     ap.add_argument("--max-depth", type=int, default=2, help="Walk depth (1-5)")
-    ap.add_argument("--min-strength", type=int, default=2, help="Min co-occurrence count (overview mode)")
+    ap.add_argument(
+        "--min-strength",
+        type=int,
+        default=2,
+        help="Min co-occurrence count (overview mode)",
+    )
     ap.add_argument("--limit", type=int, default=80, help="Max edges/nodes")
     ap.add_argument("-o", "--out", default="hexus-graph.html", help="Output HTML path")
     args = ap.parse_args()
@@ -275,7 +307,9 @@ def main() -> int:
 
     if args.seed:
         seed_type, seed_value = args.seed
-        nodes, edges = fetch_walk(store, seed_type, seed_value, args.agent, args.max_depth, args.limit)
+        nodes, edges = fetch_walk(
+            store, seed_type, seed_value, args.agent, args.max_depth, args.limit
+        )
         subtitle = f"walk from <b>{seed_type}:{seed_value}</b> · depth ≤ {args.max_depth} · {len(nodes)} nodes / {len(edges)} edges"
         if args.agent:
             subtitle += f" · agent=<b>{args.agent}</b>"

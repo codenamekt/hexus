@@ -16,7 +16,7 @@ import pytest
 # DB connection just to reach the auth wrapper.
 pytest.importorskip("psycopg")
 
-from mcp_server.server import _wrap_with_bearer_auth  # noqa: E402
+from mcp_server.server import _wrap_with_bearer_auth
 
 
 def _make_downstream():
@@ -111,8 +111,8 @@ def test_lifespan_scope_passes_through_without_auth():
 # Server-derived caller identity (issue #19 item A)
 # -----------------------------------------------------------------------
 
-from mcp_server.server import _wrap_with_identity  # noqa: E402
-from mcp_server import tools  # noqa: E402
+from mcp_server import tools
+from mcp_server.server import _wrap_with_identity
 
 
 def _identity_scope(session_key=None):
@@ -206,7 +206,7 @@ def test_read_identity_strict_confines_to_caller(monkeypatch):
 # SQL-safety helpers + isolation policy (issue #19), no DB required
 # -----------------------------------------------------------------------
 
-from hexus.store import _escape_like, _resolve_isolation  # noqa: E402
+from hexus.store import _escape_like, _resolve_isolation
 
 
 def test_escape_like_neutralizes_wildcards():

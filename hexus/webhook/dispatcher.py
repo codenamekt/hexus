@@ -2,10 +2,11 @@ import hashlib
 import hmac
 import json
 import logging
-import time
 import threading
+import time
+from typing import Any
+
 import requests
-from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -17,9 +18,9 @@ def sign_payload(payload_bytes: bytes, secret: str) -> str:
 
 def dispatch_webhook_sync(
     url: str,
-    secret: Optional[str],
+    secret: str | None,
     event: str,
-    payload: Dict[str, Any],
+    payload: dict[str, Any],
     max_retries: int = 3,
     initial_backoff: float = 1.0,
 ) -> None:
@@ -32,7 +33,7 @@ def dispatch_webhook_sync(
 
     try:
         body = json.dumps(full_payload)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         logger.error("Failed to serialize webhook payload for event %s: %s", event, exc)
         return
 
@@ -75,11 +76,10 @@ def dispatch_webhook_sync(
                 attempt + 1,
                 exc,
             )
-        except Exception as exc:
+        except Exception:
             logger.exception(
-                "Unexpected error in webhook dispatch thread for event %s: %s",
+                "Unexpected error in webhook dispatch thread for event %s",
                 event,
-                exc,
             )
             return
 
@@ -96,10 +96,10 @@ def dispatch_webhook_sync(
 
 
 def dispatch_webhook(
-    url: Optional[str],
-    secret: Optional[str],
+    url: str | None,
+    secret: str | None,
     event: str,
-    payload: Dict[str, Any],
+    payload: dict[str, Any],
 ) -> None:
     """Asynchronously dispatch webhook in a background daemon thread."""
     if not url:
