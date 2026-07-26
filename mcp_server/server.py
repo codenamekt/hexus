@@ -1288,7 +1288,7 @@ def _build_server(
             """
             try:
                 body = await request.json()
-            except Exception:
+            except ValueError:
                 return JSONResponse({"error": "invalid JSON body"}, status_code=400)
 
             try:
@@ -1296,7 +1296,7 @@ def _build_server(
                 if "error" in result:
                     return JSONResponse(result, status_code=400)
                 return JSONResponse(result)
-            except Exception as exc:
+            except (ValueError, KeyError, TypeError) as exc:
                 return JSONResponse({"error": str(exc)}, status_code=500)
 
         async def retain(request: Request):
@@ -1309,7 +1309,7 @@ def _build_server(
             """
             try:
                 body = await request.json()
-            except Exception:
+            except ValueError:
                 return JSONResponse({"error": "invalid JSON body"}, status_code=400)
 
             contents = body.get("contents", [])
@@ -1337,7 +1337,7 @@ def _build_server(
             try:
                 result = tools.memory_retain(store, args)
                 return JSONResponse(result)
-            except Exception as exc:
+            except (ValueError, KeyError, TypeError) as exc:
                 return JSONResponse({"error": str(exc)}, status_code=500)
 
         async def append_turn(request: Request):
@@ -1350,7 +1350,7 @@ def _build_server(
             """
             try:
                 body = await request.json()
-            except Exception:
+            except ValueError:
                 return JSONResponse({"error": "invalid JSON body"}, status_code=400)
 
             try:
@@ -1358,7 +1358,7 @@ def _build_server(
                 if "error" in result:
                     return JSONResponse(result, status_code=400)
                 return JSONResponse(result)
-            except Exception as exc:
+            except (ValueError, KeyError, TypeError) as exc:
                 return JSONResponse({"error": str(exc)}, status_code=500)
 
         async def metrics(request):
