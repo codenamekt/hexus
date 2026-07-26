@@ -45,8 +45,8 @@ function getReflectionConfig(): ReflectionConfig {
     tokenThreshold: isNaN(tokenThreshold) ? 8000 : tokenThreshold,
     minTurnsBetweenReflections: isNaN(minTurns) ? 10 : minTurns,
     idleSeconds: isNaN(idleSeconds) ? 10 : idleSeconds,
-    modelProvider: process.env["HEXUS_REFLECTION_MODEL"] ?? "headroom",
-    modelId: process.env["HEXUS_REFLECTION_MODEL_ID"] ?? "tobiTradez/minimax-m2.7-highspeed",
+    modelProvider: process.env["HEXUS_REFLECTION_MODEL"] ?? "tobiTradez",
+    modelId: process.env["HEXUS_REFLECTION_MODEL_ID"] ?? "minimax-m2.7-highspeed",
   };
 }
 
