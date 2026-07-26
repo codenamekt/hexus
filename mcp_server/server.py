@@ -1263,20 +1263,112 @@ def _build_server(
         """Return metrics from Hexus database and background async queue stats."""
         return tools.memory_stats(store, {})
 
-    # -- patch ASGI app for Prometheus /metrics endpoint -------------------
+    # -- patch ASGI app for REST API + Prometheus /metrics endpoint -------------------
     _orig_get_asgi_app = mcp.streamable_http_app
 
-    def get_asgi_app_with_metrics(*args, **kwargs):
+    def get_asgi_app_with_rest_api(*args, **kwargs):
         app = _orig_get_asgi_app(*args, **kwargs)
-        from starlette.responses import Response
-        from . import tools
+        from starlette.responses import JSONResponse
+        from starlette.requests import Request
 
         tools.http_transport_active = True
 
-        async def metrics(request):
-            return Response(_generate_metrics(store), media_type="text/plain")
+        async def health(request):
+            """Health check endpoint for pi extension and other clients."""
+            result = tools.memory_health(store, {})
+            return JSONResponse(result)
 
-        app.add_route("/metrics", metrics)
+        async def recall(request: Request):
+            """Semantic search over memory entries.
+
+            POST /api/recall
+            Body: {"query": str, "top_k"?: int, "agent_identity"?: str,
+                   "target"?: "memory"|"user", "min_similarity"?: float}
+            Returns: {"query", "count", "results": [...]}
+            """
+            try:
+                body = await request.json()
+            except Exception:
+                return JSONResponse({"error": "invalid JSON body"}, status_code=400)
+
+            try:
+                result = tools.memory_recall(store, body)
+                if "error" in result:
+                    return JSONResponse(result, status_code=400)
+                return JSONResponse(result)
+            except Exception as exc:
+                return JSONResponse({"error": str(exc)}, status_code=500)
+
+        async def retain(request: Request):
+            """Store one or more memory entries.
+
+            POST /api/retain
+            Body (new simplified): {"contents": [str], "target"?: str, "metadata"?: dict, "agent_identity"?: str}
+            Body (legacy): {"contents": [{"content": str, "target"?: str, "metadata"?: dict}], "agent_identity"?: str}
+            Returns: {"inserted", "duplicates", "errors"}
+            """
+            try:
+                body = await request.json()
+            except Exception:
+                return JSONResponse({"error": "invalid JSON body"}, status_code=400)
+
+            contents = body.get("contents", [])
+            agent_identity = body.get("agent_identity")
+            target = body.get("target")
+            metadata = body.get("metadata")
+
+            if not isinstance(contents, list) or not contents:
+                return JSONResponse({"error": "contents must be a non-empty list"}, status_code=400)
+
+            # Normalize: support both string[] (new) and {content}[] (legacy)
+            normalized = []
+            for item in contents:
+                if isinstance(item, str):
+                    normalized.append({"content": item, "target": target, "metadata": metadata})
+                elif isinstance(item, dict):
+                    normalized.append(item)
+                else:
+                    return JSONResponse({"error": "contents items must be strings or objects"}, status_code=400)
+
+            args = {"contents": normalized}
+            if agent_identity:
+                args["agent_identity"] = agent_identity
+
+            try:
+                result = tools.memory_retain(store, args)
+                return JSONResponse(result)
+            except Exception as exc:
+                return JSONResponse({"error": str(exc)}, status_code=500)
+
+        async def append_turn(request: Request):
+            """Store a conversation turn.
+
+            POST /api/append-turn
+            Body: {"session_id": str, "role": str, "content": str,
+                   "agent_identity"?: str, "metadata"?: dict}
+            Returns: {"id", "session_id", "role"}
+            """
+            try:
+                body = await request.json()
+            except Exception:
+                return JSONResponse({"error": "invalid JSON body"}, status_code=400)
+
+            try:
+                result = tools.memory_append_turn(store, body)
+                if "error" in result:
+                    return JSONResponse(result, status_code=400)
+                return JSONResponse(result)
+            except Exception as exc:
+                return JSONResponse({"error": str(exc)}, status_code=500)
+
+        async def metrics(request):
+            return JSONResponse(_generate_metrics(store), media_type="text/plain")
+
+        app.add_route("/api/health", health, ["GET"])
+        app.add_route("/api/recall", recall, ["POST"])
+        app.add_route("/api/retain", retain, ["POST"])
+        app.add_route("/api/append-turn", append_turn, ["POST"])
+        app.add_route("/metrics", metrics, ["GET"])
 
         # Optional bearer-token auth on the HTTP transport. When
         # HEXUS_API_TOKEN is set, every HTTP request (MCP calls + /metrics)
@@ -1302,7 +1394,7 @@ def _build_server(
         )
         return app
 
-    mcp.streamable_http_app = get_asgi_app_with_metrics
+    mcp.streamable_http_app = get_asgi_app_with_rest_api
 
     return mcp
 

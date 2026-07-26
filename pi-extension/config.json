@@ -1,0 +1,8 @@
+{
+  "apiUrl": "http://localhost:8000",
+  "agentIdentity": "pi",
+  "recallLimit": 5,
+  "minSimilarity": 0.3,
+  "enabled": true,
+  "storeTurns": true
+}
