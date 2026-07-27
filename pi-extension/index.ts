@@ -13,7 +13,7 @@
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { complete, getModel } from "@earendil-works/pi-ai/compat";
+import { complete } from "@earendil-works/pi-ai/compat";
 import { getConfig, initConfig } from "./config";
 import { getClient, type MemoryResult } from "./http-client";
 
@@ -26,8 +26,8 @@ interface ReflectionConfig {
   tokenThreshold: number;
   minTurnsBetweenReflections: number;
   idleSeconds: number;
-  modelProvider: string;
-  modelId: string;
+  /** Model in "provider/modelId" format (e.g. "tobiTradez/minimax-m2.7-highspeed") */
+  model: string;
 }
 
 function getReflectionConfig(): ReflectionConfig {
@@ -45,8 +45,7 @@ function getReflectionConfig(): ReflectionConfig {
     tokenThreshold: isNaN(tokenThreshold) ? 8000 : tokenThreshold,
     minTurnsBetweenReflections: isNaN(minTurns) ? 10 : minTurns,
     idleSeconds: isNaN(idleSeconds) ? 10 : idleSeconds,
-    modelProvider: process.env["HEXUS_REFLECTION_MODEL"] ?? "tobiTradez",
-    modelId: process.env["HEXUS_REFLECTION_MODEL_ID"] ?? "minimax-m2.7-highspeed",
+    model: process.env["HEXUS_REFLECTION_MODEL"] ?? "tobiTradez/minimax-m2.7-highspeed",
   };
 }
 
@@ -156,9 +155,10 @@ export default function hexus(pi: ExtensionAPI) {
     ctx.ui.notify("Running session reflection...", "info");
 
     try {
-      const model = getModel(reflConfig.modelProvider, reflConfig.modelId);
+      const [provider, modelId] = reflConfig.model.split("/");
+      const model = ctx.modelRegistry.find(provider, modelId);
       if (!model) {
-        console.warn(`hexus: model ${reflConfig.modelProvider}/${reflConfig.modelId} not found`);
+        console.warn(`hexus: model ${reflConfig.model} not found in registry`);
         isReflecting = false;
         return;
       }

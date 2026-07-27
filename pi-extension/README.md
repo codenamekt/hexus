@@ -53,8 +53,7 @@ Or via environment variables:
 | `HEXUS_REFLECTION_TOKEN_THRESHOLD` | `8000` | Min tokens before reflection |
 | `HEXUS_REFLECTION_MIN_TURNS` | `10` | Turns between reflections |
 | `HEXUS_REFLECTION_IDLE_SECONDS` | `10` | Idle time before reflection |
-| `HEXUS_REFLECTION_MODEL` | `tobiTradez` | Model provider |
-| `HEXUS_REFLECTION_MODEL_ID` | `minimax-m2.7-highspeed` | Model ID |
+| `HEXUS_REFLECTION_MODEL` | `tobiTradez/minimax-m2.7-highspeed` | Model as `"provider/modelId"` |
 
 ## hexus API Endpoints Required
 
