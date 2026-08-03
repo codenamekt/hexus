@@ -1325,21 +1325,35 @@ def _build_server(
                 )
 
             # Normalize: support both string[] (new) and {content}[] (legacy)
-            normalized = []
+            flat_contents = []
+            flat_metas = []
+            flat_target = target
             for item in contents:
                 if isinstance(item, str):
-                    normalized.append(
-                        {"content": item, "target": target, "metadata": metadata}
-                    )
+                    flat_contents.append(item)
+                    flat_metas.append(metadata)
                 elif isinstance(item, dict):
-                    normalized.append(item)
+                    c = item.get("content")
+                    if not isinstance(c, str):
+                        return JSONResponse(
+                            {"error": "contents items must be strings or contain a 'content' key with a string value"},
+                            status_code=400,
+                        )
+                    flat_contents.append(c)
+                    if not flat_target:
+                        flat_target = item.get("target")
+                    flat_metas.append(item.get("metadata") or metadata)
                 else:
                     return JSONResponse(
                         {"error": "contents items must be strings or objects"},
                         status_code=400,
                     )
 
-            args = {"contents": normalized}
+            args = {
+                "contents": flat_contents,
+                "target": flat_target,
+                "metadata": flat_metas,
+            }
             if agent_identity:
                 args["agent_identity"] = agent_identity
 

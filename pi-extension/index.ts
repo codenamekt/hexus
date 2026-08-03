@@ -45,7 +45,7 @@ function getReflectionConfig(): ReflectionConfig {
     tokenThreshold: isNaN(tokenThreshold) ? 8000 : tokenThreshold,
     minTurnsBetweenReflections: isNaN(minTurns) ? 10 : minTurns,
     idleSeconds: isNaN(idleSeconds) ? 10 : idleSeconds,
-    model: process.env["HEXUS_REFLECTION_MODEL"] ?? "tobiTradez/minimax-m2.7-highspeed",
+    model: `${process.env["HEXUS_REFLECTION_MODEL_PROVIDER"] ?? "headroom"}/${process.env["HEXUS_REFLECTION_MODEL"] ?? "tobiTradez/minimax-m2.7-highspeed"}`,
   };
 }
 
@@ -156,7 +156,16 @@ export default function hexus(pi: ExtensionAPI) {
 
     try {
       const [provider, modelId] = reflConfig.model.split("/");
-      const model = ctx.modelRegistry.find(provider, modelId);
+      let model = ctx.modelRegistry.find(provider, modelId);
+      if (!model) {
+        // Model not found — refresh registry in case litellm is still loading
+        await ctx.modelRegistry.refresh();
+        model = ctx.modelRegistry.find(provider, modelId);
+      }
+      if (!model) {
+        // Try current model as fallback
+        model = ctx.model as typeof model ?? undefined;
+      }
       if (!model) {
         console.warn(`hexus: model ${reflConfig.model} not found in registry`);
         isReflecting = false;
@@ -187,6 +196,8 @@ export default function hexus(pi: ExtensionAPI) {
           agent_identity: config.agentIdentity,
         });
         ctx.ui.notify(`Reflection: saved ${result.inserted} fact${result.inserted !== 1 ? "s" : ""}`, "info");
+      } else {
+        ctx.ui.notify("Reflection: nothing new to remember", "info");
       }
 
       lastReflectionTurn = turnsSinceReflection;
@@ -380,6 +391,15 @@ export default function hexus(pi: ExtensionAPI) {
         content: [{ type: "text", text: `${status}${healthLine}` }],
         details: result,
       };
+    },
+  });
+
+  // Manual reflection trigger for testing
+  pi.registerCommand("reflect", {
+    description: "Manually trigger session reflection to extract and store facts",
+    handler: async (_args, ctx) => {
+      ctx.ui.notify("Running reflection...", "info");
+      await runReflection(ctx);
     },
   });
 
