@@ -45,7 +45,16 @@ function getReflectionConfig(): ReflectionConfig {
     tokenThreshold: isNaN(tokenThreshold) ? 8000 : tokenThreshold,
     minTurnsBetweenReflections: isNaN(minTurns) ? 10 : minTurns,
     idleSeconds: isNaN(idleSeconds) ? 10 : idleSeconds,
-    model: `${process.env["HEXUS_REFLECTION_MODEL_PROVIDER"] ?? "headroom"}/${process.env["HEXUS_REFLECTION_MODEL"] ?? "tobiTradez/minimax-m2.7-highspeed"}`,
+    // HEXUS_REFLECTION_MODEL may already be a full "provider/modelId" string
+    // (e.g. "tobiTradez/minimax-m2.7-highspeed"). Only prefix the provider when
+    // it's a bare model ID — otherwise "openai/gpt-4o" would become
+    // "headroom/openai/gpt-4o" (provider=headroom, modelId=openai/gpt-4o).
+    model: (() => {
+      const model = process.env["HEXUS_REFLECTION_MODEL"] ?? "tobiTradez/minimax-m2.7-highspeed";
+      return model.includes("/")
+        ? model
+        : `${process.env["HEXUS_REFLECTION_MODEL_PROVIDER"] ?? "headroom"}/${model}`;
+    })(),
   };
 }
 
@@ -169,7 +178,7 @@ export default function hexus(pi: ExtensionAPI) {
       }
       if (!model) {
         // Try current model as fallback
-        model = ctx.model as typeof model ?? undefined;
+        model = ctx.model;
       }
       if (!model) {
         console.warn(`hexus: model ${reflConfig.model} not found in registry`);
@@ -403,6 +412,10 @@ export default function hexus(pi: ExtensionAPI) {
   pi.registerCommand("reflect", {
     description: "Manually trigger session reflection to extract and store facts",
     handler: async (_args, ctx) => {
+      if (!reflConfig.enabled) {
+        ctx.ui.notify("Reflection is disabled (HEXUS_REFLECTION_ENABLED=false)", "warning");
+        return;
+      }
       ctx.ui.notify("Running reflection...", "info");
       await runReflection(ctx);
     },

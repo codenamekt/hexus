@@ -214,6 +214,7 @@ def memory_retain(store: MemoryStore, args: dict[str, Any]) -> dict[str, Any]:
     args:
       contents: list[str]  — text to store (one row per element)
       target:   'memory' | 'user' | None (default = 'memory')
+      targets:  list[str] | None — per-item target, overrides `target`
       metadata: dict | list[dict] | None — per-item metadata
       agent_identity: str | None (default = env / 'default')
       doc_type: 'document' | 'note' | 'memory'  (default 'memory') — stored in metadata
@@ -228,7 +229,23 @@ def memory_retain(store: MemoryStore, args: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(c, str) or not c.strip():
             raise ValueError(f"contents[{i}] must be a non-empty string")
 
-    target = _coerce_target(args) or "memory"
+    # Normalize targets to one entry per content. A per-item `targets` list
+    # takes precedence; a scalar `target` applies to all items.
+    targets_in = args.get("targets")
+    if targets_in is None:
+        target_list = [_coerce_target(args) or "memory"] * len(contents)
+    elif isinstance(targets_in, list):
+        if len(targets_in) != len(contents):
+            raise ValueError("targets list length must match contents length")
+        target_list = []
+        for t in targets_in:
+            coerced = _coerce_target({"target": t})
+            if coerced is None:
+                coerced = "memory"
+            target_list.append(coerced)
+    else:
+        raise ValueError("targets must be a list or None")
+
     agent = _write_identity(args)
     doc_type = args.get("doc_type", "memory")
     source_url = args.get("source_url")
@@ -267,7 +284,8 @@ def memory_retain(store: MemoryStore, args: dict[str, Any]) -> dict[str, Any]:
     inserted = 0
     duplicates = 0
     errors: list[str] = []
-    for content, vec, meta in zip(contents, vectors, stamped):
+    for i, (content, vec, meta) in enumerate(zip(contents, vectors, stamped)):
+        target = target_list[i]
         try:
             row_id = store.add(
                 agent_identity=agent,

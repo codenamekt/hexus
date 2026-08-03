@@ -1330,11 +1330,12 @@ def _build_server(
             # Normalize: support both string[] (new) and {content}[] (legacy)
             flat_contents = []
             flat_metas = []
-            flat_target = target
+            flat_targets = []
             for item in contents:
                 if isinstance(item, str):
                     flat_contents.append(item)
                     flat_metas.append(metadata)
+                    flat_targets.append(target)
                 elif isinstance(item, dict):
                     c = item.get("content")
                     if not isinstance(c, str):
@@ -1343,9 +1344,13 @@ def _build_server(
                             status_code=400,
                         )
                     flat_contents.append(c)
-                    if not flat_target:
-                        flat_target = item.get("target")
-                    flat_metas.append(item.get("metadata") or metadata)
+                    # Per-item target/metadata win over the shared defaults.
+                    # Use `is not None` (not `or`) so empty dict {} / empty
+                    # string targets are preserved rather than silently dropped.
+                    item_target = item.get("target")
+                    flat_targets.append(item_target if item_target is not None else target)
+                    item_meta = item.get("metadata")
+                    flat_metas.append(item_meta if item_meta is not None else metadata)
                 else:
                     return JSONResponse(
                         {"error": "contents items must be strings or objects"},
@@ -1354,7 +1359,7 @@ def _build_server(
 
             args = {
                 "contents": flat_contents,
-                "target": flat_target,
+                "targets": flat_targets,
                 "metadata": flat_metas,
             }
             if agent_identity:
