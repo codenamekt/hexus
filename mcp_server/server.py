@@ -1281,7 +1281,9 @@ def _build_server(
                 result = tools.memory_health(store, {})
                 return JSONResponse(result)
             except Exception as exc:  # noqa: BLE001
-                return JSONResponse({"status": "error", "error": str(exc)}, status_code=500)
+                return JSONResponse(
+                    {"status": "error", "error": str(exc)}, status_code=500
+                )
 
         async def recall(request: Request):
             """Semantic search over memory entries.
@@ -1340,7 +1342,9 @@ def _build_server(
                     c = item.get("content")
                     if not isinstance(c, str):
                         return JSONResponse(
-                            {"error": "contents items must be strings or contain a 'content' key with a string value"},
+                            {
+                                "error": "contents items must be strings or contain a 'content' key with a string value"
+                            },
                             status_code=400,
                         )
                     flat_contents.append(c)
@@ -1348,7 +1352,9 @@ def _build_server(
                     # Use `is not None` (not `or`) so empty dict {} / empty
                     # string targets are preserved rather than silently dropped.
                     item_target = item.get("target")
-                    flat_targets.append(item_target if item_target is not None else target)
+                    flat_targets.append(
+                        item_target if item_target is not None else target
+                    )
                     item_meta = item.get("metadata")
                     flat_metas.append(item_meta if item_meta is not None else metadata)
                 else:

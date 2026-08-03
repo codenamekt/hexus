@@ -98,12 +98,8 @@ class ContentRouter:
         lines = text.splitlines()
         compressed_lines = []
         for line in lines:
-            if (
-                re.match(r"^\s*(def|class|import|from|async\s+def)\b", line)
-                or (
-                    re.match(r"^\s*#.*", line)
-                    and len(compressed_lines) < 10
-                )
+            if re.match(r"^\s*(def|class|import|from|async\s+def)\b", line) or (
+                re.match(r"^\s*#.*", line) and len(compressed_lines) < 10
             ):
                 compressed_lines.append(line)
 
