@@ -136,9 +136,12 @@ Empty array if nothing worth remembering. Only output JSON.`;
 
 export default function hexus(pi: ExtensionAPI) {
   // Bootstrap config asynchronously — initConfig() runs once and caches.
-  // getConfig() returns defaults until the promise resolves, then returns real config.
-  initConfig().catch((err) => console.warn("hexus: config load failed:", err));
-  const config = getConfig();
+  // getConfig() returns defaults until the promise resolves, so capture the
+  // resolved config once it's available instead of freezing the defaults.
+  let config = getConfig();
+  initConfig()
+    .then((cfg) => { config = cfg; })
+    .catch((err) => console.warn("hexus: config load failed:", err));
   const reflConfig = getReflectionConfig();
 
   // State
@@ -146,6 +149,7 @@ export default function hexus(pi: ExtensionAPI) {
   let turnsSinceReflection = 0;
   let lastReflectionTurn = 0;
   let idleTimer: ReturnType<typeof setTimeout> | null = null;
+  let healthRetryTimer: ReturnType<typeof setTimeout> | null = null;
   let isReflecting = false;
   let recallInFlight = false; // Dedupe concurrent recall calls
 
@@ -244,6 +248,25 @@ export default function hexus(pi: ExtensionAPI) {
     }, reflConfig.idleSeconds * 1000);
   }
 
+  // Re-check /api/health every few seconds while offline so the status
+  // recovers automatically once the server is reachable again.
+  function scheduleHealthRetry(ctx: ExtensionAPI): void {
+    if (healthRetryTimer) clearTimeout(healthRetryTimer);
+    healthRetryTimer = setTimeout(async () => {
+      healthRetryTimer = null;
+      const client = getClient();
+      const health = await client.health(true).catch(() => null);
+      if (health?.status === "ok") {
+        ctx.ui.notify(`hexus connected (${health.row_counts.memory_entries} memories)`, "info");
+        ctx.ui.setStatus("hexus", `hexus: ${health.row_counts.memory_entries} memories`);
+        if (reflConfig.enabled) scheduleReflection(ctx);
+      } else {
+        ctx.ui.setStatus("hexus", "hexus: offline");
+        scheduleHealthRetry(ctx);
+      }
+    }, 10_000);
+  }
+
   // -------------------------------------------------------------------------
   // Events
   // -------------------------------------------------------------------------
@@ -261,6 +284,9 @@ export default function hexus(pi: ExtensionAPI) {
     } else {
       ctx.ui.notify("hexus: connection failed", "warning");
       ctx.ui.setStatus("hexus", "hexus: offline");
+      // Keep polling so the status recovers without waiting for the next turn
+      // (or a user prompt) once the server is reachable again.
+      scheduleHealthRetry(ctx);
     }
   });
 
@@ -426,6 +452,7 @@ export default function hexus(pi: ExtensionAPI) {
 
   pi.on("session_shutdown", () => {
     if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
+    if (healthRetryTimer) { clearTimeout(healthRetryTimer); healthRetryTimer = null; }
     // Reset in-flight state so a new session starts clean
     isReflecting = false;
     recallInFlight = false;
