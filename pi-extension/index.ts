@@ -103,6 +103,9 @@ function extractText(content: unknown): string[] {
 }
 
 function buildConversationText(entries: any[]): string {
+  // getBranch() may return undefined/null before session state is populated —
+  // guard so `for...of` doesn't throw TypeError: undefined is not iterable.
+  if (!Array.isArray(entries)) return "";
   const sections: string[] = [];
   for (const e of entries) {
     if (e.type !== "message" || !["user", "assistant"].includes(e.message?.role)) continue;
