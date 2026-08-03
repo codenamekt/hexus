@@ -1,6 +1,6 @@
 # Forked from andreab67/hermes-memory-pgvector (BSD-3-Clause)
-import re
 import json
+import re
 
 
 class ContentRouter:
@@ -63,7 +63,7 @@ class ContentRouter:
                 return f"[Compressed JSON Object] keys: {', '.join(keys)}\nSample: {json.dumps(truncated)}"
             elif isinstance(data, list):
                 return f"[Compressed JSON Array] length: {len(data)}\nFirst item: {json.dumps(data[0]) if data else 'empty'}"
-        except Exception:
+        except Exception:  # noqa: BLE001, S110
             pass
         return text[: self.threshold_chars] + "\n... [Truncated JSON]"
 
@@ -98,9 +98,9 @@ class ContentRouter:
         lines = text.splitlines()
         compressed_lines = []
         for line in lines:
-            if re.match(r"^\s*(def|class|import|from|async\s+def)\b", line):
-                compressed_lines.append(line)
-            elif re.match(r"^\s*#.*", line) and len(compressed_lines) < 10:
+            if re.match(r"^\s*(def|class|import|from|async\s+def)\b", line) or (
+                re.match(r"^\s*#.*", line) and len(compressed_lines) < 10
+            ):
                 compressed_lines.append(line)
 
         if len(compressed_lines) < 3:

@@ -46,12 +46,12 @@ import logging
 import os
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 try:
     from agent.memory_provider import MemoryProvider
-    from tools.registry import tool_error
     from hermes_cli.config import cfg_get
+    from tools.registry import tool_error
 except (
     ImportError
 ):  # pragma: no cover - standalone smoke tests do not install hermes-agent
@@ -59,12 +59,12 @@ except (
     tool_error = None  # type: ignore[assignment]
     cfg_get = None  # type: ignore[assignment]
 
-from .embed import embed, EmbeddingError
-from .store import MemoryStore
 import hashlib
-from .writer import AsyncWriter, _PendingWrite
-from .pipeline.router import ContentRouter
 
+from .embed import EmbeddingError, embed
+from .pipeline.router import ContentRouter
+from .store import MemoryStore
+from .writer import AsyncWriter, _PendingWrite
 
 # Boilerplate / acknowledgement-only turns that are not worth embedding or
 # storing. Case-insensitive whole-string match after strip. Combined with
@@ -443,7 +443,7 @@ def _load_plugin_config() -> dict:
             cfg_get(data, "plugins", "hexus", default={}) or {}
         )
         return expanded if isinstance(expanded, dict) else {}
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001  # noqa: BLE001  # noqa: BLE001
         return {}
 
 
@@ -502,14 +502,14 @@ class HexusMemoryProvider(MemoryProvider or object):
                 "install this package inside Hermes Agent to use the provider."
             )
         self._config = {**DEFAULTS, **(config or {})}
-        self._store: Optional[MemoryStore] = None
-        self._writer: Optional[AsyncWriter] = None
+        self._store: MemoryStore | None = None
+        self._writer: AsyncWriter | None = None
         self._agent_identity: str = "default"
         self._session_id: str = ""
         self._healthy = False
         self._embed_warned = False
-        self._last_md_mtimes: Dict[str, float] = {}
-        self._hermes_home: Optional[str] = None
+        self._last_md_mtimes: dict[str, float] = {}
+        self._hermes_home: str | None = None
         self._content_router = ContentRouter()
 
     @property
@@ -609,7 +609,7 @@ class HexusMemoryProvider(MemoryProvider or object):
             "embed_url"
         ):
             try:
-                from .embedder import get_default_embedder, DEFAULT_MODEL
+                from .embedder import DEFAULT_MODEL, get_default_embedder
 
                 get_default_embedder(
                     model_name=self._config.get("embed_model") or DEFAULT_MODEL
@@ -670,7 +670,7 @@ class HexusMemoryProvider(MemoryProvider or object):
                 from hermes_constants import get_hermes_home
 
                 self._hermes_home = str(get_hermes_home())
-            except Exception:
+            except Exception:  # noqa: BLE001  # noqa: BLE001
                 return
 
         memories_dir = Path(self._hermes_home) / "memories"
@@ -686,7 +686,7 @@ class HexusMemoryProvider(MemoryProvider or object):
                     ):
                         changed = True
                         self._last_md_mtimes[fname] = mtime
-                except Exception as exc:
+                except Exception as exc:  # noqa: BLE001
                     logger.debug("hexus failed to get mtime for %s: %s", fname, exc)
 
         if changed:
@@ -755,7 +755,7 @@ class HexusMemoryProvider(MemoryProvider or object):
 
                 self._last_md_mtimes[rel_path] = mtime
                 logger.info("hexus: synced skill '%s' from disk", skill_name)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 logger.debug("hexus failed to sync skill %s: %s", skill_file, exc)
 
     # -- System prompt + ambient recall --------------------------------------
@@ -766,7 +766,7 @@ class HexusMemoryProvider(MemoryProvider or object):
         try:
             count_scoped = self._store.count(agent_identity=self._agent_identity)
             count_all = self._store.count()
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001  # noqa: BLE001  # noqa: BLE001
             count_scoped = count_all = 0
         if count_all == 0:
             return (
@@ -866,9 +866,7 @@ class HexusMemoryProvider(MemoryProvider or object):
             return True
         if len(stripped) < min_chars:
             return True
-        if _NOISE_RE.match(stripped):
-            return True
-        return False
+        return bool(_NOISE_RE.match(stripped))
 
     # -- Built-in memory mirror (THE main integration point) ----------------
 
@@ -877,7 +875,7 @@ class HexusMemoryProvider(MemoryProvider or object):
         action: str,
         target: str,
         content: str,
-        metadata: Optional[Dict[str, Any]] = None,
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         """Mirror built-in `memory` tool writes to Postgres (non-blocking).
 
@@ -908,7 +906,7 @@ class HexusMemoryProvider(MemoryProvider or object):
             metadata=meta,
         )
 
-    def _worker(self, item: "_PendingWrite") -> None:
+    def _worker(self, item: _PendingWrite) -> None:
         """Drain-thread worker: embed + DB write for a single queued item.
 
         Must NOT raise — the AsyncWriter logs + survives if we do, but
@@ -1074,7 +1072,7 @@ class HexusMemoryProvider(MemoryProvider or object):
                 str(exc)[:200],
             )
 
-    def _generate_session_summary(self, messages_json: str) -> Optional[str]:
+    def _generate_session_summary(self, messages_json: str) -> str | None:
         import urllib.request
 
         try:
@@ -1148,7 +1146,7 @@ class HexusMemoryProvider(MemoryProvider or object):
                     "hexus: session summary successfully generated: %s", summary_content
                 )
                 return summary_content
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.debug("hexus failed to generate session summary via LLM: %s", e)
             return None
 
@@ -1180,7 +1178,7 @@ class HexusMemoryProvider(MemoryProvider or object):
             metadata=meta,
         )
 
-    def on_pre_compress(self, messages: List[Dict[str, Any]]) -> str:
+    def on_pre_compress(self, messages: list[dict[str, Any]]) -> str:
         """Called before context compaction discards older messages."""
         if not self._healthy or not self._writer or not messages:
             return ""
@@ -1196,7 +1194,7 @@ class HexusMemoryProvider(MemoryProvider or object):
         )
         return ""
 
-    def on_session_end(self, messages: List[Dict[str, Any]]) -> None:
+    def on_session_end(self, messages: list[dict[str, Any]]) -> None:
         """Called when a session ends."""
         if not self._healthy or not self._writer:
             return
@@ -1236,7 +1234,7 @@ class HexusMemoryProvider(MemoryProvider or object):
 
     # -- Bulk sync (v0.1.1) --------------------------------------------------
 
-    def _bulk_sync_from_disk(self, hermes_home: Optional[str]) -> None:
+    def _bulk_sync_from_disk(self, hermes_home: str | None) -> None:
         """Import MEMORY.md + USER.md entries from disk into memory_entries.
 
         Called by initialize(). Runs synchronously (not via async writer)
@@ -1252,7 +1250,7 @@ class HexusMemoryProvider(MemoryProvider or object):
                 from hermes_constants import get_hermes_home
 
                 hermes_home = str(get_hermes_home())
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001  # noqa: BLE001  # noqa: BLE001
                 return
 
         memories_dir = Path(hermes_home) / "memories"
@@ -1295,7 +1293,7 @@ class HexusMemoryProvider(MemoryProvider or object):
 
     # -- Tool surface --------------------------------------------------------
 
-    def get_tool_schemas(self) -> List[Dict[str, Any]]:
+    def get_tool_schemas(self) -> list[dict[str, Any]]:
         return [
             RECALL_MEMORY_SCHEMA,
             RECALL_CONVERSATION_SCHEMA,
@@ -1310,7 +1308,7 @@ class HexusMemoryProvider(MemoryProvider or object):
             MEMORY_STATS_SCHEMA,
         ]
 
-    def handle_tool_call(self, tool_name: str, args: Dict[str, Any], **kwargs) -> str:
+    def handle_tool_call(self, tool_name: str, args: dict[str, Any], **kwargs) -> str:
         if tool_name == "recall_conversation":
             return self._handle_recall_conversation(args)
         if tool_name == "recall_delegation":
@@ -1352,7 +1350,7 @@ class HexusMemoryProvider(MemoryProvider or object):
             args.get("scope") or self._config.get("scope_default") or "current"
         ).strip()
         if scope == "current":
-            agent_filter: Optional[str] = self._agent_identity
+            agent_filter: str | None = self._agent_identity
         elif scope == "all":
             agent_filter = None
         else:
@@ -1360,7 +1358,7 @@ class HexusMemoryProvider(MemoryProvider or object):
 
         # Target resolution: 'memory'/'user'/'both'.
         target_arg = (args.get("target") or "both").strip()
-        target_filter: Optional[str] = None if target_arg == "both" else target_arg
+        target_filter: str | None = None if target_arg == "both" else target_arg
         if target_filter not in (None, "memory", "user"):
             return tool_error(f"Invalid target: {target_arg!r}")
 
@@ -1404,7 +1402,7 @@ class HexusMemoryProvider(MemoryProvider or object):
             )
         return json.dumps({"results": results, "count": len(results)})
 
-    def _handle_recall_conversation(self, args: Dict[str, Any]) -> str:
+    def _handle_recall_conversation(self, args: dict[str, Any]) -> str:
         """Tool handler for recall_conversation over the conversations table."""
         if not self._healthy or not self._store:
             return json.dumps({"results": [], "count": 0, "error": "hexus unavailable"})
@@ -1418,8 +1416,8 @@ class HexusMemoryProvider(MemoryProvider or object):
             limit = 5
 
         scope = (args.get("scope") or "current").strip()
-        agent_filter: Optional[str] = None
-        session_filter: Optional[str] = None
+        agent_filter: str | None = None
+        session_filter: str | None = None
         if scope == "current":
             agent_filter = self._agent_identity
         elif scope == "session":
@@ -1464,7 +1462,7 @@ class HexusMemoryProvider(MemoryProvider or object):
             )
         return json.dumps({"results": results, "count": len(results)})
 
-    def _handle_recall_delegation(self, args: Dict[str, Any]) -> str:
+    def _handle_recall_delegation(self, args: dict[str, Any]) -> str:
         """Tool handler for recall_delegation over the delegations table."""
         if not self._healthy or not self._store:
             return json.dumps({"results": [], "count": 0, "error": "hexus unavailable"})
@@ -1478,7 +1476,7 @@ class HexusMemoryProvider(MemoryProvider or object):
             limit = 5
 
         scope = (args.get("scope") or "current").strip()
-        agent_filter: Optional[str] = None
+        agent_filter: str | None = None
         if scope == "current":
             agent_filter = self._agent_identity
         elif scope == "all":
@@ -1521,7 +1519,7 @@ class HexusMemoryProvider(MemoryProvider or object):
             )
         return json.dumps({"results": results, "count": len(results)})
 
-    def _handle_entity_graph(self, args: Dict[str, Any]) -> str:
+    def _handle_entity_graph(self, args: dict[str, Any]) -> str:
         """Tool handler for entity_graph."""
         if not self._healthy or not self._store:
             return json.dumps({"error": "hexus unavailable"})
@@ -1539,7 +1537,7 @@ class HexusMemoryProvider(MemoryProvider or object):
             limit = 5
 
         scope = (args.get("scope") or "current").strip()
-        agent_filter: Optional[str] = None
+        agent_filter: str | None = None
         if scope == "current":
             agent_filter = self._agent_identity
         elif scope == "all":
@@ -1555,10 +1553,10 @@ class HexusMemoryProvider(MemoryProvider or object):
                 limit=limit,
             )
             return json.dumps(res)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             return json.dumps({"error": f"db: {exc}"})
 
-    def _handle_graph_walk(self, args: Dict[str, Any]) -> str:
+    def _handle_graph_walk(self, args: dict[str, Any]) -> str:
         """Tool handler for graph_walk."""
         if not self._healthy or not self._store:
             return json.dumps({"error": "hexus unavailable"})
@@ -1581,7 +1579,7 @@ class HexusMemoryProvider(MemoryProvider or object):
             limit = 5
 
         scope = (args.get("scope") or "current").strip()
-        agent_filter: Optional[str] = None
+        agent_filter: str | None = None
         if scope == "current":
             agent_filter = self._agent_identity
         elif scope == "all":
@@ -1598,10 +1596,10 @@ class HexusMemoryProvider(MemoryProvider or object):
                 limit=limit,
             )
             return json.dumps({"results": res})
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             return json.dumps({"error": f"db: {exc}"})
 
-    def _handle_common_topics(self, args: Dict[str, Any]) -> str:
+    def _handle_common_topics(self, args: dict[str, Any]) -> str:
         """Tool handler for common_topics."""
         if not self._healthy or not self._store:
             return json.dumps({"error": "hexus unavailable"})
@@ -1617,7 +1615,7 @@ class HexusMemoryProvider(MemoryProvider or object):
             limit = 10
 
         scope = (args.get("scope") or "current").strip()
-        agent_filter: Optional[str] = None
+        agent_filter: str | None = None
         if scope == "current":
             agent_filter = self._agent_identity
         elif scope == "all":
@@ -1632,10 +1630,10 @@ class HexusMemoryProvider(MemoryProvider or object):
                 limit=limit,
             )
             return json.dumps({"results": res})
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             return json.dumps({"error": f"db: {exc}"})
 
-    def _handle_confirm_memory(self, args: Dict[str, Any]) -> str:
+    def _handle_confirm_memory(self, args: dict[str, Any]) -> str:
         """Tool handler for confirm_memory."""
         if not self._healthy or not self._store:
             return json.dumps({"error": "hexus unavailable"})
@@ -1651,10 +1649,10 @@ class HexusMemoryProvider(MemoryProvider or object):
         try:
             success = self._store.confirm_entry(entry_id, self._agent_identity)
             return json.dumps({"id": entry_id, "success": success})
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             return json.dumps({"error": f"db: {exc}"})
 
-    def _handle_reject_memory(self, args: Dict[str, Any]) -> str:
+    def _handle_reject_memory(self, args: dict[str, Any]) -> str:
         """Tool handler for reject_memory."""
         if not self._healthy or not self._store:
             return json.dumps({"error": "hexus unavailable"})
@@ -1670,10 +1668,10 @@ class HexusMemoryProvider(MemoryProvider or object):
         try:
             success = self._store.reject_entry(entry_id, self._agent_identity)
             return json.dumps({"id": entry_id, "success": success})
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             return json.dumps({"error": f"db: {exc}"})
 
-    def _handle_summarize_session(self, args: Dict[str, Any]) -> str:
+    def _handle_summarize_session(self, args: dict[str, Any]) -> str:
         """Tool handler for summarize_session."""
         if not self._healthy or not self._store:
             return json.dumps({"error": "hexus unavailable"})
@@ -1694,10 +1692,10 @@ class HexusMemoryProvider(MemoryProvider or object):
                 agent_identity=self._agent_identity,
             )
             return json.dumps(res)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             return json.dumps({"error": f"db: {exc}"})
 
-    def _handle_headroom_retrieve(self, args: Dict[str, Any]) -> str:
+    def _handle_headroom_retrieve(self, args: dict[str, Any]) -> str:
         """Tool handler for headroom_retrieve."""
         if not self._healthy or not self._store:
             return json.dumps({"error": "hexus unavailable"})
@@ -1715,10 +1713,10 @@ class HexusMemoryProvider(MemoryProvider or object):
             if content is None:
                 return json.dumps({"id": entry_id, "found": False, "content": None})
             return json.dumps({"id": entry_id, "found": True, "content": content})
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             return json.dumps({"error": f"db: {exc}"})
 
-    def _handle_memory_stats(self, args: Dict[str, Any]) -> str:
+    def _handle_memory_stats(self, args: dict[str, Any]) -> str:
         """Tool handler for memory_stats."""
         if not self._healthy or not self._store:
             return json.dumps({"error": "hexus unavailable"})
@@ -1727,12 +1725,12 @@ class HexusMemoryProvider(MemoryProvider or object):
 
             res = memory_stats(self._store, args)
             return json.dumps(res)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             return json.dumps({"error": f"stats check failed: {exc}"})
 
     # -- Setup hooks ---------------------------------------------------------
 
-    def get_config_schema(self) -> List[Dict[str, Any]]:
+    def get_config_schema(self) -> list[dict[str, Any]]:
         return [
             {
                 "key": "dsn",
@@ -1809,14 +1807,14 @@ class HexusMemoryProvider(MemoryProvider or object):
             },
         ]
 
-    def save_config(self, values: Dict[str, Any], hermes_home: str) -> None:
+    def save_config(self, values: dict[str, Any], hermes_home: str) -> None:
         from pathlib import Path
 
         config_path = Path(hermes_home) / "config.yaml"
         try:
             import yaml
 
-            existing: Dict[str, Any] = {}
+            existing: dict[str, Any] = {}
             if config_path.exists():
                 with open(config_path, encoding="utf-8-sig") as fh:
                     existing = yaml.safe_load(fh) or {}
@@ -1829,7 +1827,7 @@ class HexusMemoryProvider(MemoryProvider or object):
 
     # -- Helpers -------------------------------------------------------------
 
-    def _maybe_embed(self, content: str) -> Optional[List[float]]:
+    def _maybe_embed(self, content: str) -> list[float] | None:
         if not self._config.get("embed_on_write", True):
             return None
         try:

@@ -66,7 +66,7 @@ def store():
     yield s
     # Best-effort cleanup of any rows this test wrote.
     try:
-        with s._get_pool().connection() as conn:  # noqa: SLF001
+        with s._get_pool().connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     "DELETE FROM memory_entries WHERE agent_identity = %s",
@@ -119,7 +119,7 @@ def test_memory_retain_inserts_rows(store):
         {
             "contents": ["alpha bravo", "charlie delta"],
             "target": "memory",
-            "agent_identity": agent_of(store),  # noqa: SLF001
+            "agent_identity": agent_of(store),
             "metadata": {"doc_type": "document", "source_url": "https://example.com/a"},
         },
     )
@@ -134,7 +134,7 @@ def test_memory_retain_dedupes_on_exact_repeat(store):
     args = {
         "contents": ["unique content one"],
         "target": "memory",
-        "agent_identity": agent_of(store),  # noqa: SLF001
+        "agent_identity": agent_of(store),
     }
     first = tools.memory_retain(store, args)
     second = tools.memory_retain(store, args)
@@ -161,7 +161,7 @@ def test_memory_retain_rejects_bad_target(store):
             {
                 "contents": ["x"],
                 "target": "bogus",
-                "agent_identity": agent_of(store),  # noqa: SLF001
+                "agent_identity": agent_of(store),
             },
         )
 
@@ -176,7 +176,7 @@ def test_empty_string_target_defaults_to_both_stores(store):
         {
             "contents": ["Postgres + hexus is great for semantic search."],
             "target": "memory",
-            "agent_identity": agent_of(store),  # noqa: SLF001
+            "agent_identity": agent_of(store),
         },
     )
 
@@ -185,7 +185,7 @@ def test_empty_string_target_defaults_to_both_stores(store):
         {
             "query": "hexus semantic search",
             "top_k": 3,
-            "agent_identity": agent_of(store),  # noqa: SLF001
+            "agent_identity": agent_of(store),
             "target": "",
         },
     )
@@ -195,7 +195,7 @@ def test_empty_string_target_defaults_to_both_stores(store):
     count = tools.memory_count(
         store,
         {
-            "agent_identity": agent_of(store),  # noqa: SLF001
+            "agent_identity": agent_of(store),
             "target": "",
         },
     )
@@ -216,7 +216,7 @@ def test_memory_recall_round_trip(store):
         store,
         {
             "contents": docs,
-            "agent_identity": agent_of(store),  # noqa: SLF001
+            "agent_identity": agent_of(store),
         },
     )
 
@@ -225,7 +225,7 @@ def test_memory_recall_round_trip(store):
         {
             "query": "what does hexus do",
             "top_k": 3,
-            "agent_identity": agent_of(store),  # noqa: SLF001
+            "agent_identity": agent_of(store),
         },
     )
     assert out["count"] == 3
@@ -250,7 +250,7 @@ def test_memory_hybrid_search_round_trip(store):
         store,
         {
             "contents": docs,
-            "agent_identity": agent_of(store),  # noqa: SLF001
+            "agent_identity": agent_of(store),
         },
     )
 
@@ -261,7 +261,7 @@ def test_memory_hybrid_search_round_trip(store):
             "top_k": 3,
             "vector_weight": 0.5,
             "text_weight": 0.5,
-            "agent_identity": agent_of(store),  # noqa: SLF001
+            "agent_identity": agent_of(store),
         },
     )
     assert out["count"] >= 1
@@ -280,7 +280,7 @@ def test_memory_hybrid_recall_turns_round_trip(store):
             "session_id": "session-123",
             "role": "user",
             "content": "My favorite database is Postgres.",
-            "agent_identity": agent_of(store),  # noqa: SLF001
+            "agent_identity": agent_of(store),
         },
     )
     tools.memory_append_turn(
@@ -289,7 +289,7 @@ def test_memory_hybrid_recall_turns_round_trip(store):
             "session_id": "session-123",
             "role": "assistant",
             "content": "I prefer local BERT embeddings.",
-            "agent_identity": agent_of(store),  # noqa: SLF001
+            "agent_identity": agent_of(store),
         },
     )
 
@@ -300,7 +300,7 @@ def test_memory_hybrid_recall_turns_round_trip(store):
             "top_k": 2,
             "vector_weight": 0.5,
             "text_weight": 0.5,
-            "agent_identity": agent_of(store),  # noqa: SLF001
+            "agent_identity": agent_of(store),
         },
     )
     assert out["count"] >= 1
@@ -313,7 +313,7 @@ def test_memory_hybrid_recall_turns_round_trip(store):
 def test_memory_delegation_round_trip(store):
     from mcp_server import tools
 
-    identity = agent_of(store)  # noqa: SLF001
+    identity = agent_of(store)
     rec = tools.memory_record_delegation(
         store,
         {
@@ -350,7 +350,7 @@ def test_memory_recall_respects_min_similarity(store):
         store,
         {
             "contents": ["Postgres is a relational database."],
-            "agent_identity": agent_of(store),  # noqa: SLF001
+            "agent_identity": agent_of(store),
         },
     )
     out = tools.memory_recall(
@@ -358,7 +358,7 @@ def test_memory_recall_respects_min_similarity(store):
         {
             "query": "Postgres relational database",
             "top_k": 5,
-            "agent_identity": agent_of(store),  # noqa: SLF001
+            "agent_identity": agent_of(store),
             "min_similarity": 0.5,
         },
     )
@@ -373,7 +373,7 @@ def test_memory_recall_caps_top_k(store):
         store,
         {
             "contents": [f"entry {i}" for i in range(10)],
-            "agent_identity": agent_of(store),  # noqa: SLF001
+            "agent_identity": agent_of(store),
         },
     )
     out = tools.memory_recall(
@@ -381,7 +381,7 @@ def test_memory_recall_caps_top_k(store):
         {
             "query": "entry",
             "top_k": 10000,  # way over the cap
-            "agent_identity": agent_of(store),  # noqa: SLF001
+            "agent_identity": agent_of(store),
         },
     )
     # Capped at 100, but we only have 10 rows so count is 10.
@@ -405,7 +405,7 @@ def test_memory_recall_cross_agent_returns_other_agents_rows(store):
         store,
         {
             "contents": ["the meaning of life is forty two"],
-            "agent_identity": agent_of(store),  # noqa: SLF001
+            "agent_identity": agent_of(store),
         },
     )
     # Recall with agent_identity="" (None) — should find it.
@@ -424,13 +424,13 @@ def test_memory_search_browse(store):
         store,
         {
             "contents": [f"row {i}" for i in range(5)],
-            "agent_identity": agent_of(store),  # noqa: SLF001
+            "agent_identity": agent_of(store),
         },
     )
     out = tools.memory_search(
         store,
         {
-            "agent_identity": agent_of(store),  # noqa: SLF001
+            "agent_identity": agent_of(store),
             "limit": 3,
         },
     )
@@ -445,7 +445,7 @@ def test_memory_search_browse(store):
     out_page2 = tools.memory_search(
         store,
         {
-            "agent_identity": agent_of(store),  # noqa: SLF001
+            "agent_identity": agent_of(store),
             "limit": 2,
             "offset": 3,
         },
@@ -464,22 +464,22 @@ def test_memory_forget_dry_run_by_default(store):
         store,
         {
             "contents": ["to be deleted"],
-            "agent_identity": agent_of(store),  # noqa: SLF001
+            "agent_identity": agent_of(store),
         },
     )
     assert out["inserted"] == 1
     # Look up the row id.
-    listed = store.list_entries(agent_identity=agent_of(store), limit=1)  # noqa: SLF001
+    listed = store.list_entries(agent_identity=agent_of(store), limit=1)
     row_id = listed[0]["id"]
 
     dry = tools.memory_forget(
         store,
-        {"id": row_id, "agent_identity": agent_of(store), "confirm": False},  # noqa: SLF001
+        {"id": row_id, "agent_identity": agent_of(store), "confirm": False},
     )
     assert dry["dry_run"] is True
     assert dry["deleted"] == 0
     # Row is still there.
-    after = store.list_entries(agent_identity=agent_of(store), limit=10)  # noqa: SLF001
+    after = store.list_entries(agent_identity=agent_of(store), limit=10)
     assert any(r["id"] == row_id for r in after)
 
 
@@ -490,20 +490,20 @@ def test_memory_forget_actually_deletes_with_confirm(store):
         store,
         {
             "contents": ["goodbye cruel world"],
-            "agent_identity": agent_of(store),  # noqa: SLF001
+            "agent_identity": agent_of(store),
         },
     )
     assert out["inserted"] == 1
-    row_id = store.list_entries(agent_identity=agent_of(store), limit=1)[0]["id"]  # noqa: SLF001
+    row_id = store.list_entries(agent_identity=agent_of(store), limit=1)[0]["id"]
 
     real = tools.memory_forget(
         store,
-        {"id": row_id, "agent_identity": agent_of(store), "confirm": True},  # noqa: SLF001
+        {"id": row_id, "agent_identity": agent_of(store), "confirm": True},
     )
     assert real["dry_run"] is False
     assert real["deleted"] == 1
     # And the row is gone.
-    after = store.list_entries(agent_identity=agent_of(store), limit=10)  # noqa: SLF001
+    after = store.list_entries(agent_identity=agent_of(store), limit=10)
     assert not any(r["id"] == row_id for r in after)
 
 
@@ -529,7 +529,7 @@ def test_memory_append_turn_and_recall_turns(store):
             "session_id": "sess-abc",
             "role": "user",
             "content": "I love using Postgres for memory",
-            "agent_identity": agent_of(store),  # noqa: SLF001
+            "agent_identity": agent_of(store),
         },
     )
     assert isinstance(out["id"], int) and out["id"] > 0
@@ -539,7 +539,7 @@ def test_memory_append_turn_and_recall_turns(store):
             "session_id": "sess-abc",
             "role": "assistant",
             "content": "Glad to hear! hexus is a great fit.",
-            "agent_identity": agent_of(store),  # noqa: SLF001
+            "agent_identity": agent_of(store),
         },
     )
     assert out2["id"] > out["id"]
@@ -549,7 +549,7 @@ def test_memory_append_turn_and_recall_turns(store):
         {
             "query": "Postgres memory",
             "top_k": 5,
-            "agent_identity": agent_of(store),  # noqa: SLF001
+            "agent_identity": agent_of(store),
         },
     )
     assert recall["count"] >= 1
@@ -567,7 +567,7 @@ def test_memory_append_turn_validates_role(store):
                 "session_id": "s1",
                 "role": "pirate",
                 "content": "arrr",
-                "agent_identity": agent_of(store),  # noqa: SLF001
+                "agent_identity": agent_of(store),
             },
         )
 
@@ -579,7 +579,7 @@ def test_memory_count_scopes_correctly(store):
         store,
         {
             "contents": [f"row {i}" for i in range(3)],
-            "agent_identity": agent_of(store),  # noqa: SLF001
+            "agent_identity": agent_of(store),
         },
     )
     out = tools.memory_count(store, {"agent_identity": agent_of(store)})
@@ -638,7 +638,7 @@ def test_multi_agent_isolation(store):
 
     # Cleanup.
     for a in (agent_a, agent_b):
-        with store._get_pool().connection() as conn:  # noqa: SLF001
+        with store._get_pool().connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     "DELETE FROM memory_entries WHERE agent_identity = %s", (a,)
@@ -769,7 +769,7 @@ def test_mcp_graph_tools_round_trip(store):
     """Verify that we can call entity_graph, graph_walk, and common_topics via FastMCP handlers."""
     from mcp_server import tools
 
-    agent = agent_of(store)  # noqa: SLF001
+    agent = agent_of(store)
 
     # Insert docs containing entities
     tools.memory_retain(
@@ -825,7 +825,7 @@ def test_mcp_confirm_reject_summarize_round_trip(store):
     """Verify that we can call memory_confirm, memory_reject, and memory_summarize_session via FastMCP handlers."""
     from mcp_server import tools
 
-    agent = agent_of(store)  # noqa: SLF001
+    agent = agent_of(store)
 
     # Retain entry
     tools.memory_retain(
@@ -946,8 +946,9 @@ def test_mcp_memory_stats_round_trip(store):
 
 def test_mcp_server_cleanup_thread_startup(monkeypatch):
     """Verify that build_server spawns the background cleanup thread if configured."""
-    import threading
     import os
+    import threading
+
     from mcp_server.server import build_server
 
     # Set environment variables to enable cleanup
@@ -969,8 +970,8 @@ def test_mcp_server_cleanup_thread_startup(monkeypatch):
 
 def test_mcp_recall_dynamic_decay(store):
     """Verify that memory_recall tool respects decay_half_life_days dynamic parameter."""
-    from mcp_server import tools
     from hexus.store import dict_row
+    from mcp_server import tools
 
     agent = agent_of(store)
 
@@ -993,7 +994,7 @@ def test_mcp_recall_dynamic_decay(store):
     )
 
     # Retrieve their IDs from database to modify updated_at
-    with store._get_pool().connection() as conn:
+    with store._get_pool().connection() as conn:  # noqa: SIM117
         with (
             conn.cursor(row_factory=dict_row)
             if hasattr(conn, "cursor")
@@ -1054,8 +1055,9 @@ def test_mcp_recall_dynamic_decay(store):
 
 def test_mcp_server_consolidation_thread_startup(monkeypatch):
     """Verify that build_server spawns the background consolidation thread if configured."""
-    import threading
     import os
+    import threading
+
     from mcp_server.server import build_server
 
     monkeypatch.setenv("HEXUS_CONSOLIDATION_INTERVAL_HOURS", "1")
@@ -1072,8 +1074,9 @@ def test_mcp_server_consolidation_thread_startup(monkeypatch):
 
 def test_mcp_consolidation_round_trip(store, monkeypatch):
     """Verify that consolidation works and updates DB and metrics correctly."""
-    import urllib.request
     import json
+    import urllib.request
+
     from hexus.store import dict_row
 
     # 1. Setup mock environment
@@ -1093,12 +1096,9 @@ def test_mcp_consolidation_round_trip(store, monkeypatch):
     # 2. Insert some low confidence memories (rejected count > 0, confirm count = 0)
     agent = "test-agent-consolidation"
 
-    with store._get_pool().connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "DELETE FROM memory_entries WHERE agent_identity = %s", (agent,)
-            )
-            conn.commit()
+    with store._get_pool().connection() as conn, conn.cursor() as cur:
+        cur.execute("DELETE FROM memory_entries WHERE agent_identity = %s", (agent,))
+        conn.commit()
 
     # Insert entry to delete
     store.add(
@@ -1115,17 +1115,17 @@ def test_mcp_consolidation_round_trip(store, monkeypatch):
     )
 
     # Get IDs of inserted entries
-    with store._get_pool().connection() as conn:
-        with (
-            conn.cursor(row_factory=dict_row)
-            if hasattr(conn, "cursor")
-            else conn.cursor() as cur
-        ):
-            cur.execute(
-                "SELECT id, content FROM memory_entries WHERE agent_identity = %s",
-                (agent,),
-            )
-            rows = list(cur.fetchall())
+    with (
+        store._get_pool().connection() as conn,
+        conn.cursor(row_factory=dict_row)
+        if hasattr(conn, "cursor")
+        else conn.cursor() as cur,
+    ):
+        cur.execute(
+            "SELECT id, content FROM memory_entries WHERE agent_identity = %s",
+            (agent,),
+        )
+        rows = list(cur.fetchall())
 
     assert len(rows) == 3
 
@@ -1134,16 +1134,15 @@ def test_mcp_consolidation_round_trip(store, monkeypatch):
     id_rep2 = next(r["id"] for r in rows if "Second" in r["content"])
 
     # Update metadata to make them low confidence (reject_count = 1, confirm_count = 0)
-    with store._get_pool().connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "UPDATE memory_entries SET metadata = %s WHERE id = ANY(%s)",
-                (
-                    json.dumps({"reject_count": 1, "confirm_count": 0}),
-                    [id_delete, id_rep1, id_rep2],
-                ),
-            )
-            conn.commit()
+    with store._get_pool().connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "UPDATE memory_entries SET metadata = %s WHERE id = ANY(%s)",
+            (
+                json.dumps({"reject_count": 1, "confirm_count": 0}),
+                [id_delete, id_rep1, id_rep2],
+            ),
+        )
+        conn.commit()
 
     # Define the mock LLM response data
     llm_resp_data = {
@@ -1192,17 +1191,17 @@ def test_mcp_consolidation_round_trip(store, monkeypatch):
     assert res["replacements"] == 2
 
     # Assert database is updated: id_delete, id_rep1, id_rep2 should be gone
-    with store._get_pool().connection() as conn:
-        with (
-            conn.cursor(row_factory=dict_row)
-            if hasattr(conn, "cursor")
-            else conn.cursor() as cur
-        ):
-            cur.execute(
-                "SELECT id, content FROM memory_entries WHERE agent_identity = %s",
-                (agent,),
-            )
-            new_rows = list(cur.fetchall())
+    with (
+        store._get_pool().connection() as conn,
+        conn.cursor(row_factory=dict_row)
+        if hasattr(conn, "cursor")
+        else conn.cursor() as cur,
+    ):
+        cur.execute(
+            "SELECT id, content FROM memory_entries WHERE agent_identity = %s",
+            (agent,),
+        )
+        new_rows = list(cur.fetchall())
 
     # Should have exactly 1 entry: the consolidated python text
     assert len(new_rows) == 1
@@ -1278,7 +1277,7 @@ def test_mcp_consolidation_round_trip(store, monkeypatch):
     assert res_co["replacements"] == 3
 
     # Assert database is updated: the 3 Docker facts are gone and the consolidated one is added
-    with store._get_pool().connection() as conn:
+    with store._get_pool().connection() as conn:  # noqa: SIM117
         with (
             conn.cursor(row_factory=dict_row)
             if hasattr(conn, "cursor")
@@ -1291,7 +1290,7 @@ def test_mcp_consolidation_round_trip(store, monkeypatch):
             docker_rows = list(cur.fetchall())
     assert len(docker_rows) == 0
 
-    with store._get_pool().connection() as conn:
+    with store._get_pool().connection() as conn:  # noqa: SIM117
         with (
             conn.cursor(row_factory=dict_row)
             if hasattr(conn, "cursor")
@@ -1307,8 +1306,9 @@ def test_mcp_consolidation_round_trip(store, monkeypatch):
 
 def test_memory_consolidate_tool(store, monkeypatch):
     """Verify that the memory_consolidate tool can be called and executes consolidation."""
-    import urllib.request
     import json
+    import urllib.request
+
     from mcp_server.server import _build_server
 
     monkeypatch.setenv("HEXUS_SUMMARY_MODEL", "mock-summary-model")

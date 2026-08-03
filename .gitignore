@@ -46,3 +46,6 @@ CLAUDE.md
 AGENTS.md
 .planning/
 .claude/
+
+# Node
+node_modules/

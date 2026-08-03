@@ -33,7 +33,6 @@ import os
 os.environ.setdefault("USER", "agy")
 import threading
 from dataclasses import dataclass, replace
-from typing import Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -96,7 +95,7 @@ class EmbedStats:
     tokens_dropped: int = 0  # approx tokens lost to truncation (Σ tc-max_seq)
     max_tokens_seen: int = 0  # largest single-text token count observed
 
-    def as_dict(self) -> Dict[str, int]:
+    def as_dict(self) -> dict[str, int]:
         return {
             "texts_embedded": self.texts_embedded,
             "texts_over_limit": self.texts_over_limit,
@@ -108,7 +107,7 @@ class EmbedStats:
         }
 
 
-def _resolve_long_text_mode(mode: Optional[str]) -> str:
+def _resolve_long_text_mode(mode: str | None) -> str:
     """Resolve the configured mode: explicit arg > env var > default.
 
     An unrecognised value falls back to the default with a warning rather
@@ -156,9 +155,9 @@ class LocalBertEmbedder:
         self,
         model_name: str = DEFAULT_MODEL,
         *,
-        cache_dir: Optional[str] = None,
+        cache_dir: str | None = None,
         device: str = "cpu",
-        long_text_mode: Optional[str] = None,
+        long_text_mode: str | None = None,
     ):
         self._model_name = model_name
         self._cache_dir = cache_dir
@@ -201,8 +200,10 @@ class LocalBertEmbedder:
             # transformer config. Fall through to the constant if not.
             try:
                 return int(self._model.get_sentence_embedding_dimension())
-            except Exception:  # noqa: BLE001
-                pass
+            except Exception as exc:  # noqa: BLE001
+                logger.debug(
+                    "hexus embedder: failed to get embedding dimension: %s", exc
+                )
         return DEFAULT_DIM if self._model_name == DEFAULT_MODEL else 0
 
     @property
@@ -229,7 +230,7 @@ class LocalBertEmbedder:
         with self._stats_lock:
             self._stats = EmbedStats()
 
-    def embed(self, texts: List[str]) -> List[List[float]]:
+    def embed(self, texts: list[str]) -> list[list[float]]:
         """Embed a list of texts → list of float vectors.
 
         Empty / whitespace-only inputs are silently dropped (returned
@@ -266,7 +267,7 @@ class LocalBertEmbedder:
                 convert_to_numpy=True,
                 show_progress_bar=False,
             )
-        except Exception as exc:  # noqa: BLE001 — fail-soft, surface in logs
+        except Exception as exc:
             raise EmbedderError(f"local embed failed: {exc}") from exc
 
         # Reassemble one vector per original input (chunk windows collapse
@@ -291,8 +292,8 @@ class LocalBertEmbedder:
     # -- Long-input handling (issue #7) -------------------------------------
 
     def _plan_encode(
-        self, texts: List[str], model
-    ) -> Tuple[List[str], List[Tuple[int, int, Optional[List[float]]]]]:
+        self, texts: list[str], model
+    ) -> tuple[list[str], list[tuple[int, int, list[float] | None]]]:
         """Turn `texts` into (`pieces` to encode, `plan` to reassemble them).
 
         Each plan entry is `(start, count, weights)`:
@@ -313,8 +314,8 @@ class LocalBertEmbedder:
         )
 
         mode = self._long_text_mode
-        pieces: List[str] = []
-        plan: List[Tuple[int, int, Optional[List[float]]]] = []
+        pieces: list[str] = []
+        plan: list[tuple[int, int, list[float] | None]] = []
 
         for i, text in enumerate(texts):
             with self._stats_lock:
@@ -329,8 +330,7 @@ class LocalBertEmbedder:
             # Over the limit — count it (in every mode) and record the peak.
             with self._stats_lock:
                 self._stats.texts_over_limit += 1
-                if tc > self._stats.max_tokens_seen:
-                    self._stats.max_tokens_seen = tc
+                self._stats.max_tokens_seen = max(self._stats.max_tokens_seen, tc)
                 over_count = self._stats.texts_over_limit
 
             if mode == LONG_TEXT_MODE_CHUNK:
@@ -361,8 +361,8 @@ class LocalBertEmbedder:
         return pieces, plan
 
     def _assemble(
-        self, raw, plan: List[Tuple[int, int, Optional[List[float]]]]
-    ) -> List[List[float]]:
+        self, raw, plan: list[tuple[int, int, list[float] | None]]
+    ) -> list[list[float]]:
         """Collapse encoded `pieces` back to one vector per original input.
 
         Single-piece entries are returned verbatim (byte-identical to the
@@ -379,7 +379,7 @@ class LocalBertEmbedder:
 
         import numpy as np
 
-        vectors: List[List[float]] = []
+        vectors: list[list[float]] = []
         for start, count, weights in plan:
             if count == 1:
                 vectors.append(raw[start].tolist())
@@ -406,7 +406,7 @@ class LocalBertEmbedder:
         except (TypeError, ValueError):
             return 0
 
-    def _token_counts(self, texts: List[str], tokenizer) -> Optional[List[int]]:
+    def _token_counts(self, texts: list[str], tokenizer) -> list[int] | None:
         """True (untruncated) token count per text, or None if unavailable.
 
         `verbose=False` suppresses HuggingFace's "sequence longer than model
@@ -427,7 +427,7 @@ class LocalBertEmbedder:
             )
             return None
 
-    def _chunk_text(self, text: str, tokenizer, max_seq: int) -> List[Tuple[str, int]]:
+    def _chunk_text(self, text: str, tokenizer, max_seq: int) -> list[tuple[str, int]]:
         """Split `text` into overlapping token windows → [(chunk_text, n_tokens)].
 
         We reserve room for the special tokens the tokenizer re-adds when each
@@ -451,7 +451,7 @@ class LocalBertEmbedder:
         if len(ids) <= window:
             return [(text, len(ids))]
 
-        chunks: List[Tuple[str, int]] = []
+        chunks: list[tuple[str, int]] = []
         for start in range(0, len(ids), stride):
             window_ids = ids[start : start + window]
             if not window_ids:
@@ -550,7 +550,7 @@ class LocalBertEmbedder:
                     self._device,
                 )
                 return self._model
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 self._load_failed = True
                 raise EmbedderError(
                     f"failed to load sentence-transformers model {self._model_name}: {exc}"
@@ -564,17 +564,17 @@ class LocalBertEmbedder:
 # Caching is keyed on (model_name, cache_dir, device) so a request for a
 # different model returns a different embedder (mostly relevant for tests
 # — production uses one model). The dict is small in practice.
-_singletons: dict[tuple[str, Optional[str], str, str], "LocalBertEmbedder"] = {}
+_singletons: dict[tuple[str, str | None, str, str], LocalBertEmbedder] = {}
 _singleton_lock = threading.Lock()
 
 
 def get_default_embedder(
     model_name: str = DEFAULT_MODEL,
     *,
-    cache_dir: Optional[str] = None,
-    device: Optional[str] = None,
-    long_text_mode: Optional[str] = None,
-) -> "LocalBertEmbedder":
+    cache_dir: str | None = None,
+    device: str | None = None,
+    long_text_mode: str | None = None,
+) -> LocalBertEmbedder:
     """Return the process-wide default embedder for these args, constructing
     it on first call. Subsequent calls with the same (model_name, cache_dir,
     device, long_text_mode) return the same instance.
@@ -587,7 +587,6 @@ def get_default_embedder(
     part of the cache key so a request for a different mode returns a
     distinct embedder rather than silently reusing another mode's instance.
     """
-    global _singletons
     if device is None:
         device = os.environ.get("HEXUS_EMBED_DEVICE", "cpu")
     mode = _resolve_long_text_mode(long_text_mode)

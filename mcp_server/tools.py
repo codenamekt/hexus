@@ -24,7 +24,7 @@ from __future__ import annotations
 import logging
 import os
 from contextvars import ContextVar
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from hexus.embed import EmbeddingError, embed
 from hexus.store import MemoryStore
@@ -57,14 +57,14 @@ def default_agent_identity() -> str:
 # -----------------------------------------------------------------------
 
 
-def memory_health(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
+def memory_health(store: MemoryStore, args: dict[str, Any]) -> dict[str, Any]:
     """Liveness + capability check. Useful for MCP client setup probes.
 
     Returns the store's status, the embedder model name + dim, and a
     row count. Always succeeds if Postgres is reachable, even if the
     embedder isn't loaded yet (lazy load).
     """
-    from hexus.embedder import DEFAULT_MODEL, DEFAULT_DIM
+    from hexus.embedder import DEFAULT_DIM, DEFAULT_MODEL
 
     try:
         store.ensure_schema()
@@ -94,7 +94,7 @@ def memory_health(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _coerce_agent_identity(args: Dict[str, Any]) -> str:
+def _coerce_agent_identity(args: dict[str, Any]) -> str:
     """Read agent_identity from args, defaulting to env / 'default'."""
     a = args.get("agent_identity")
     if isinstance(a, str) and a.strip():
@@ -124,7 +124,7 @@ _CALLER_KEY = "_caller_identity"
 # only writer is the server's request middleware. stdio / in-process callers
 # leave it None and keep the pre-#19 behavior. An explicit `_caller_identity`
 # in args (in-process callers, tests) still takes precedence over the var.
-current_caller: ContextVar[Optional[str]] = ContextVar(
+current_caller: ContextVar[str | None] = ContextVar(
     "hexus_current_caller", default=None
 )
 
@@ -132,7 +132,7 @@ current_caller: ContextVar[Optional[str]] = ContextVar(
 http_transport_active = False
 
 
-def _caller_identity(args: Dict[str, Any]) -> Optional[str]:
+def _caller_identity(args: dict[str, Any]) -> str | None:
     """Server-derived transport identity, or None when none was set.
 
     Precedence: explicit `_caller_identity` in args (trusted in-process
@@ -153,13 +153,13 @@ def _caller_identity(args: Dict[str, Any]) -> Optional[str]:
     return None
 
 
-def _write_identity(args: Dict[str, Any]) -> str:
+def _write_identity(args: dict[str, Any]) -> str:
     """Scope an agent writes into. Transport identity is authoritative; else
     fall back to the explicit arg, then the env default."""
     return _caller_identity(args) or _coerce_agent_identity(args)
 
 
-def _scope_identity(args: Dict[str, Any]) -> Optional[str]:
+def _scope_identity(args: dict[str, Any]) -> str | None:
     """Identity to scope a by-id mutation/read to, or None to stay unscoped.
 
     Transport identity wins; otherwise an explicit non-empty `agent_identity`
@@ -176,7 +176,7 @@ def _scope_identity(args: Dict[str, Any]) -> Optional[str]:
     return None
 
 
-def _read_identity(store: MemoryStore, args: Dict[str, Any]) -> Optional[str]:
+def _read_identity(store: MemoryStore, args: dict[str, Any]) -> str | None:
     """Effective agent_identity filter for a read/search, resolving the
     empty-identity asymmetry (issue #19 item C) consistently via the store's
     isolation policy:
@@ -194,7 +194,7 @@ def _read_identity(store: MemoryStore, args: Dict[str, Any]) -> Optional[str]:
     return None
 
 
-def _coerce_target(args: Dict[str, Any]) -> Optional[str]:
+def _coerce_target(args: dict[str, Any]) -> str | None:
     """target ∈ {'memory', 'user', None}. Anything else is rejected.
 
     Empty string is treated as None to match MCP clients that send
@@ -208,12 +208,13 @@ def _coerce_target(args: Dict[str, Any]) -> Optional[str]:
     return t
 
 
-def memory_retain(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
+def memory_retain(store: MemoryStore, args: dict[str, Any]) -> dict[str, Any]:
     """Add one or many memory entries. Mirrors the plugin's `on_memory_write`.
 
     args:
       contents: list[str]  — text to store (one row per element)
       target:   'memory' | 'user' | None (default = 'memory')
+      targets:  list[str] | None — per-item target, overrides `target`
       metadata: dict | list[dict] | None — per-item metadata
       agent_identity: str | None (default = env / 'default')
       doc_type: 'document' | 'note' | 'memory'  (default 'memory') — stored in metadata
@@ -228,7 +229,23 @@ def memory_retain(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
         if not isinstance(c, str) or not c.strip():
             raise ValueError(f"contents[{i}] must be a non-empty string")
 
-    target = _coerce_target(args) or "memory"
+    # Normalize targets to one entry per content. A per-item `targets` list
+    # takes precedence; a scalar `target` applies to all items.
+    targets_in = args.get("targets")
+    if targets_in is None:
+        target_list = [_coerce_target(args) or "memory"] * len(contents)
+    elif isinstance(targets_in, list):
+        if len(targets_in) != len(contents):
+            raise ValueError("targets list length must match contents length")
+        target_list = []
+        for t in targets_in:
+            coerced = _coerce_target({"target": t})
+            if coerced is None:
+                coerced = "memory"
+            target_list.append(coerced)
+    else:
+        raise ValueError("targets must be a list or None")
+
     agent = _write_identity(args)
     doc_type = args.get("doc_type", "memory")
     source_url = args.get("source_url")
@@ -236,7 +253,7 @@ def memory_retain(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
 
     # Normalize metadata to one entry per content
     if metadata_in is None:
-        metas: List[Optional[Dict[str, Any]]] = [None] * len(contents)
+        metas: list[dict[str, Any] | None] = [None] * len(contents)
     elif isinstance(metadata_in, list):
         if len(metadata_in) != len(contents):
             raise ValueError("metadata list length must match contents length")
@@ -247,7 +264,7 @@ def memory_retain(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
         raise ValueError("metadata must be a dict, a list of dicts, or None")
 
     # Stamp each item with doc_type + source_url
-    stamped: List[Dict[str, Any]] = []
+    stamped: list[dict[str, Any]] = []
     for m in metas:
         out = dict(m) if m else {}
         if doc_type and "doc_type" not in out:
@@ -266,8 +283,9 @@ def memory_retain(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
 
     inserted = 0
     duplicates = 0
-    errors: List[str] = []
-    for content, vec, meta in zip(contents, vectors, stamped):
+    errors: list[str] = []
+    for i, (content, vec, meta) in enumerate(zip(contents, vectors, stamped)):
+        target = target_list[i]
         try:
             row_id = store.add(
                 agent_identity=agent,
@@ -300,7 +318,7 @@ def memory_retain(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
     return {"inserted": inserted, "duplicates": duplicates, "errors": errors}
 
 
-def memory_recall(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
+def memory_recall(store: MemoryStore, args: dict[str, Any]) -> dict[str, Any]:
     """Semantic search over memory_entries.
 
     args:
@@ -317,10 +335,8 @@ def memory_recall(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
         raise ValueError("query must be a non-empty string")
 
     top_k = int(args.get("top_k", 5))
-    if top_k < 1:
-        top_k = 1
-    if top_k > 100:
-        top_k = 100
+    top_k = max(top_k, 1)
+    top_k = min(top_k, 100)
 
     agent = _read_identity(store, args)
 
@@ -336,12 +352,12 @@ def memory_recall(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
 
     decay_val = args.get("decay_half_life_days")
     if decay_val is None:
-        decay_val = os.environ.get("HEXUS_DECAY_HALF_LIFE_DAYS", 0.0)
+        decay_val = os.environ.get("HEXUS_DECAY_HALF_LIFE_DAYS", "0.0")
     decay_half_life_days = max(0.0, float(decay_val))
 
     boost_val = args.get("recall_boost_weight")
     if boost_val is None:
-        boost_val = os.environ.get("HEXUS_RECALL_BOOST_WEIGHT", 0.0)
+        boost_val = os.environ.get("HEXUS_RECALL_BOOST_WEIGHT", "0.0")
     recall_boost_weight = max(0.0, float(boost_val))
 
     try:
@@ -366,7 +382,7 @@ def memory_recall(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def memory_search(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
+def memory_search(store: MemoryStore, args: dict[str, Any]) -> dict[str, Any]:
     """List entries (no embedding) — browse / paginate / inspect.
 
     args:
@@ -380,13 +396,10 @@ def memory_search(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
     agent = _read_identity(store, args)
     target = _coerce_target(args)
     limit = int(args.get("limit", 20))
-    if limit < 1:
-        limit = 1
-    if limit > 200:
-        limit = 200
+    limit = max(limit, 1)
+    limit = min(limit, 200)
     offset = int(args.get("offset", 0))
-    if offset < 0:
-        offset = 0
+    offset = max(offset, 0)
 
     rows = store.list_entries(
         agent_identity=agent, target=target, limit=limit, offset=offset
@@ -400,7 +413,7 @@ def memory_search(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def memory_forget(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
+def memory_forget(store: MemoryStore, args: dict[str, Any]) -> dict[str, Any]:
     """Delete a memory entry by id. Requires `confirm=true` to actually
     delete; without it the call is a dry-run that reports what would
     happen. This makes "drop everything matching a query" hard to do
@@ -416,14 +429,13 @@ def memory_forget(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
             "hint": "pass confirm=true to actually delete",
         }
     agent = _write_identity(args)
-    with store._get_pool().connection() as conn:  # noqa: SLF001 — admin path
-        with conn.cursor() as cur:
-            cur.execute(
-                "DELETE FROM memory_entries WHERE id = %s AND agent_identity = %s RETURNING id, target, content",
-                (entry_id, agent),
-            )
-            row = cur.fetchone()
-            conn.commit()
+    with store._get_pool().connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "DELETE FROM memory_entries WHERE id = %s AND agent_identity = %s RETURNING id, target, content",
+            (entry_id, agent),
+        )
+        row = cur.fetchone()
+        conn.commit()
 
     if row:
         webhook_url = os.environ.get("HEXUS_WEBHOOK_URL")
@@ -449,7 +461,7 @@ def memory_forget(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def memory_recall_turns(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
+def memory_recall_turns(store: MemoryStore, args: dict[str, Any]) -> dict[str, Any]:
     """Semantic search over conversation turns. Mirrors `recall_conversation`.
 
     args:
@@ -465,10 +477,8 @@ def memory_recall_turns(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, A
     if not isinstance(query, str) or not query.strip():
         raise ValueError("query must be a non-empty string")
     top_k = int(args.get("top_k", 5))
-    if top_k < 1:
-        top_k = 1
-    if top_k > 100:
-        top_k = 100
+    top_k = max(top_k, 1)
+    top_k = min(top_k, 100)
     agent = args.get("agent_identity")
     if isinstance(agent, str) and agent.strip() == "":
         agent = None
@@ -479,12 +489,12 @@ def memory_recall_turns(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, A
 
     decay_val = args.get("decay_half_life_days")
     if decay_val is None:
-        decay_val = os.environ.get("HEXUS_DECAY_HALF_LIFE_DAYS", 0.0)
+        decay_val = os.environ.get("HEXUS_DECAY_HALF_LIFE_DAYS", "0.0")
     decay_half_life_days = max(0.0, float(decay_val))
 
     boost_val = args.get("recall_boost_weight")
     if boost_val is None:
-        boost_val = os.environ.get("HEXUS_RECALL_BOOST_WEIGHT", 0.0)
+        boost_val = os.environ.get("HEXUS_RECALL_BOOST_WEIGHT", "0.0")
     recall_boost_weight = max(0.0, float(boost_val))
 
     try:
@@ -508,7 +518,7 @@ def memory_recall_turns(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, A
     }
 
 
-def memory_append_turn(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
+def memory_append_turn(store: MemoryStore, args: dict[str, Any]) -> dict[str, Any]:
     """Append one chat turn. Mirrors the plugin's `sync_turn` capture.
 
     args:
@@ -550,7 +560,7 @@ def memory_append_turn(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, An
     return {"id": row_id, "session_id": session_id, "role": role}
 
 
-def memory_count(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
+def memory_count(store: MemoryStore, args: dict[str, Any]) -> dict[str, Any]:
     """Return row counts for entries and turns, scoped as requested.
 
     args:
@@ -580,7 +590,7 @@ def memory_count(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
 # -----------------------------------------------------------------------
 
 
-def _embed_batch(texts: List[str]) -> List[List[float]]:
+def _embed_batch(texts: list[str]) -> list[list[float]]:
     """Embed a list of texts. For the local path this batches in one
     model.encode() call. The HTTP path embeds one at a time (limitation
     of the upstream embed() function) — fine for low-volume MCP traffic,
@@ -589,7 +599,7 @@ def _embed_batch(texts: List[str]) -> List[List[float]]:
     return [embed(t) for t in texts]
 
 
-def _row_to_dict(row: Any, *, include_embedding: bool = False) -> Dict[str, Any]:
+def _row_to_dict(row: Any, *, include_embedding: bool = False) -> dict[str, Any]:
     """Coerce a DB row (psycopg dict_row or plain tuple) into a JSON-safe dict."""
     if hasattr(row, "keys"):
         d = dict(row)
@@ -606,7 +616,7 @@ def _row_to_dict(row: Any, *, include_embedding: bool = False) -> Dict[str, Any]
     return d
 
 
-def memory_hybrid_search(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
+def memory_hybrid_search(store: MemoryStore, args: dict[str, Any]) -> dict[str, Any]:
     """Blend semantic vector search and full-text search over memory_entries.
 
     args:
@@ -641,12 +651,12 @@ def memory_hybrid_search(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, 
 
     decay_val = args.get("decay_half_life_days")
     if decay_val is None:
-        decay_val = os.environ.get("HEXUS_DECAY_HALF_LIFE_DAYS", 0.0)
+        decay_val = os.environ.get("HEXUS_DECAY_HALF_LIFE_DAYS", "0.0")
     decay_half_life_days = max(0.0, float(decay_val))
 
     boost_val = args.get("recall_boost_weight")
     if boost_val is None:
-        boost_val = os.environ.get("HEXUS_RECALL_BOOST_WEIGHT", 0.0)
+        boost_val = os.environ.get("HEXUS_RECALL_BOOST_WEIGHT", "0.0")
     recall_boost_weight = max(0.0, float(boost_val))
 
     try:
@@ -675,8 +685,8 @@ def memory_hybrid_search(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, 
 
 
 def memory_hybrid_recall_turns(
-    store: MemoryStore, args: Dict[str, Any]
-) -> Dict[str, Any]:
+    store: MemoryStore, args: dict[str, Any]
+) -> dict[str, Any]:
     """Blend semantic vector search and full-text search over conversation turns.
 
     args:
@@ -713,12 +723,12 @@ def memory_hybrid_recall_turns(
 
     decay_val = args.get("decay_half_life_days")
     if decay_val is None:
-        decay_val = os.environ.get("HEXUS_DECAY_HALF_LIFE_DAYS", 0.0)
+        decay_val = os.environ.get("HEXUS_DECAY_HALF_LIFE_DAYS", "0.0")
     decay_half_life_days = max(0.0, float(decay_val))
 
     boost_val = args.get("recall_boost_weight")
     if boost_val is None:
-        boost_val = os.environ.get("HEXUS_RECALL_BOOST_WEIGHT", 0.0)
+        boost_val = os.environ.get("HEXUS_RECALL_BOOST_WEIGHT", "0.0")
     recall_boost_weight = max(0.0, float(boost_val))
 
     try:
@@ -746,8 +756,8 @@ def memory_hybrid_recall_turns(
 
 
 def memory_record_delegation(
-    store: MemoryStore, args: Dict[str, Any]
-) -> Dict[str, Any]:
+    store: MemoryStore, args: dict[str, Any]
+) -> dict[str, Any]:
     """Record a subagent delegation.
 
     args:
@@ -800,8 +810,8 @@ def memory_record_delegation(
 
 
 def memory_recall_delegations(
-    store: MemoryStore, args: Dict[str, Any]
-) -> Dict[str, Any]:
+    store: MemoryStore, args: dict[str, Any]
+) -> dict[str, Any]:
     """Recall subagent delegations.
 
     args:
@@ -870,7 +880,7 @@ def memory_recall_delegations(
     }
 
 
-def memory_entity_graph(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
+def memory_entity_graph(store: MemoryStore, args: dict[str, Any]) -> dict[str, Any]:
     """Find other entities that co-occur with a target entity."""
     entity_type = args.get("entity_type")
     if not isinstance(entity_type, str) or not entity_type.strip():
@@ -895,7 +905,7 @@ def memory_entity_graph(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, A
     )
 
 
-def memory_graph_walk(store: MemoryStore, args: Dict[str, Any]) -> List[Dict[str, Any]]:
+def memory_graph_walk(store: MemoryStore, args: dict[str, Any]) -> list[dict[str, Any]]:
     """Traverse the co-occurrence graph up to N hops away from a start entity."""
     entity_type = args.get("entity_type")
     if not isinstance(entity_type, str) or not entity_type.strip():
@@ -925,8 +935,8 @@ def memory_graph_walk(store: MemoryStore, args: Dict[str, Any]) -> List[Dict[str
 
 
 def memory_common_topics(
-    store: MemoryStore, args: Dict[str, Any]
-) -> List[Dict[str, Any]]:
+    store: MemoryStore, args: dict[str, Any]
+) -> list[dict[str, Any]]:
     """Retrieve clusters/cliques of heavily co-occurring entities."""
     agent = args.get("agent_identity")
     if isinstance(agent, str) and agent.strip() == "":
@@ -945,7 +955,7 @@ def memory_common_topics(
     )
 
 
-def memory_confirm(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
+def memory_confirm(store: MemoryStore, args: dict[str, Any]) -> dict[str, Any]:
     """Increment confirm_count in metadata JSONB for the given entry ID."""
     entry_id = args.get("id")
     if entry_id is None:
@@ -959,7 +969,7 @@ def memory_confirm(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
     return {"id": entry_id, "success": success}
 
 
-def memory_reject(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
+def memory_reject(store: MemoryStore, args: dict[str, Any]) -> dict[str, Any]:
     """Increment reject_count in metadata JSONB for the given entry ID."""
     entry_id = args.get("id")
     if entry_id is None:
@@ -974,8 +984,8 @@ def memory_reject(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def memory_summarize_session(
-    store: MemoryStore, args: Dict[str, Any]
-) -> Dict[str, Any]:
+    store: MemoryStore, args: dict[str, Any]
+) -> dict[str, Any]:
     """Compute the vector centroid of a session's turns and find the K closest turns."""
     session_id = args.get("session_id")
     if not isinstance(session_id, str) or not session_id.strip():
@@ -991,7 +1001,7 @@ def memory_summarize_session(
     )
 
 
-def memory_retrieve(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
+def memory_retrieve(store: MemoryStore, args: dict[str, Any]) -> dict[str, Any]:
     """Retrieve the original full content of a memory entry by its integer ID.
 
     args:
@@ -1011,7 +1021,7 @@ def memory_retrieve(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
     return {"id": entry_id, "found": True, "content": content}
 
 
-def memory_stats(store: MemoryStore, args: Dict[str, Any]) -> Dict[str, Any]:
+def memory_stats(store: MemoryStore, args: dict[str, Any]) -> dict[str, Any]:
     """Return metrics from Hexus database and background async queue stats."""
     db_stats = {
         "memory_entries_count": store.count(agent_identity=None, target=None),

@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Benchmark script for hexus.
 
 Run inside the docker container:
@@ -166,13 +165,12 @@ def benchmark_store(dsn: str):
     print(f"  Cross-agent (None) sees: {len(rows_all)} rows")
 
     # Cleanup
-    with store._get_pool().connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "DELETE FROM memory_entries WHERE agent_identity IN (%s, %s)",
-                (agent, agent2),
-            )
-            conn.commit()
+    with store._get_pool().connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "DELETE FROM memory_entries WHERE agent_identity IN (%s, %s)",
+            (agent, agent2),
+        )
+        conn.commit()
     store.close()
 
 

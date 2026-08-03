@@ -1,6 +1,5 @@
 # Forked from andreab67/hermes-memory-pgvector (BSD-3-Clause)
 import threading
-from typing import Dict, Optional
 
 
 class CCRCache:
@@ -8,10 +7,10 @@ class CCRCache:
 
     def __init__(self, maxsize: int = 1000):
         self._maxsize = maxsize
-        self._cache: Dict[int, str] = {}
+        self._cache: dict[int, str] = {}
         self._lock = threading.Lock()
 
-    def get(self, memory_id: int) -> Optional[str]:
+    def get(self, memory_id: int) -> str | None:
         with self._lock:
             if memory_id in self._cache:
                 val = self._cache.pop(memory_id)

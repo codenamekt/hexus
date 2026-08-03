@@ -21,7 +21,6 @@ import json
 import logging
 import urllib.error
 import urllib.request
-from typing import List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -49,11 +48,11 @@ class EmbeddingError(Exception):
 def embed(
     text: str,
     *,
-    base_url: Optional[str] = None,
-    model: Optional[str] = None,
+    base_url: str | None = None,
+    model: str | None = None,
     timeout: float = 10.0,
     expected_dim: int = EXPECTED_DIM,
-) -> List[float]:
+) -> list[float]:
     """Return an embedding for `text`.
 
     Dispatch:
@@ -88,9 +87,11 @@ def embed(
         # path (e.g. a CI env that just runs unit tests against a mock
         # endpoint).
         from .embedder import (
-            get_default_embedder,
-            EmbedderError as _LocalErr,
             DEFAULT_MODEL,
+            get_default_embedder,
+        )
+        from .embedder import (
+            EmbedderError as _LocalErr,
         )
 
         embedder = get_default_embedder(model_name=model or DEFAULT_MODEL)
@@ -129,7 +130,7 @@ def embed(
 
 def _post(
     url: str, body: dict, *, timeout: float, expected_dim: int, extract
-) -> List[float]:
+) -> list[float]:
     data = json.dumps(body).encode("utf-8")
     req = urllib.request.Request(
         url,
@@ -159,7 +160,7 @@ def _post(
     return vec
 
 
-def to_hexus_literal(vec: List[float]) -> str:
+def to_hexus_literal(vec: list[float]) -> str:
     """Render a Python list of floats as a hexus input literal.
 
     psycopg can also handle this via type adapters, but the literal form

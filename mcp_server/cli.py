@@ -21,7 +21,6 @@ import json
 import logging
 import os
 import sys
-from typing import List, Optional
 
 logger = logging.getLogger("mcp_server")
 
@@ -132,6 +131,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         return 2
 
     from hexus.store import MemoryStore
+
     from . import tools
 
     _configure_logging(args.log_level)
@@ -152,7 +152,7 @@ def _redact_dsn(dsn: str) -> str:
     return re.sub(r"(password\s*=\s*)([^\s]+)", r"\1***", dsn, flags=re.IGNORECASE)
 
 
-def main(argv: Optional[List[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="hexus-mcp",
         description=(

@@ -18,15 +18,14 @@ import pytest
 # store-backed tests in this suite.
 psycopg = pytest.importorskip("psycopg")
 
-from hexus.store import (  # noqa: E402
+from hexus.store import (
     RERANK_MAX_PASSAGES,
-    rerank_scores,
-    get_rerank_stats,
-    reset_rerank_stats,
-    _resolve_rerank_mode,
     _cross_encoder_max_len,
+    _resolve_rerank_mode,
+    get_rerank_stats,
+    rerank_scores,
+    reset_rerank_stats,
 )
-
 
 QUERY = "hi there"  # 2 tokens → budget = 32 - 2 - 3 = 27
 

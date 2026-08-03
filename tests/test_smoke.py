@@ -15,6 +15,7 @@ PG_TEST_EMBED_URL is unset.
 from __future__ import annotations
 
 import os
+from datetime import UTC
 from typing import cast
 
 import pytest
@@ -60,7 +61,7 @@ def test_hexus_literal_roundtrip():
 
 
 def test_embed_empty_input_raises():
-    from hexus.embed import embed, EmbeddingError
+    from hexus.embed import EmbeddingError, embed
 
     with pytest.raises(EmbeddingError):
         embed("", base_url="http://localhost:11434")
@@ -118,12 +119,9 @@ def store():
     # Cleanup
     import psycopg
 
-    with psycopg.connect(dsn) as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "DELETE FROM memory_entries WHERE agent_identity = %s", (agent,)
-            )
-            conn.commit()
+    with psycopg.connect(dsn) as conn, conn.cursor() as cur:
+        cur.execute("DELETE FROM memory_entries WHERE agent_identity = %s", (agent,))
+        conn.commit()
 
 
 def test_health_reports_ok(store):
@@ -218,13 +216,12 @@ def test_search_cross_agent_scope(store):
         # Cleanup the second agent — primary fixture only knows about `agent`
         import psycopg
 
-        with psycopg.connect(s._dsn) as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "DELETE FROM memory_entries WHERE agent_identity = %s",
-                    (other_agent,),
-                )
-                conn.commit()
+        with psycopg.connect(s._dsn) as conn, conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM memory_entries WHERE agent_identity = %s",
+                (other_agent,),
+            )
+            conn.commit()
 
 
 def test_count_filters(store):
@@ -290,10 +287,9 @@ def store_with_turn_cleanup(store):
     yield s, agent
     import psycopg
 
-    with psycopg.connect(s._dsn) as conn:
-        with conn.cursor() as cur:
-            cur.execute("DELETE FROM conversations WHERE agent_identity = %s", (agent,))
-            conn.commit()
+    with psycopg.connect(s._dsn) as conn, conn.cursor() as cur:
+        cur.execute("DELETE FROM conversations WHERE agent_identity = %s", (agent,))
+        conn.commit()
 
 
 def test_append_turn_and_count(store_with_turn_cleanup):
@@ -443,17 +439,17 @@ def test_search_with_decay_and_boost(store):
     )
 
     # Backdate old entry by 10 days
-    import psycopg
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timedelta
 
-    old_time = datetime.now(timezone.utc) - timedelta(days=10)
-    with psycopg.connect(s._dsn) as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "UPDATE memory_entries SET created_at = %s, updated_at = %s WHERE id = %s",
-                (old_time, old_time, id_old),
-            )
-            conn.commit()
+    import psycopg
+
+    old_time = datetime.now(UTC) - timedelta(days=10)
+    with psycopg.connect(s._dsn) as conn, conn.cursor() as cur:
+        cur.execute(
+            "UPDATE memory_entries SET created_at = %s, updated_at = %s WHERE id = %s",
+            (old_time, old_time, id_old),
+        )
+        conn.commit()
 
     # Search with decay. The new entry should score higher.
     rows = s.search(query_embedding=vec, agent_identity=agent, decay_half_life_days=5.0)
@@ -462,11 +458,10 @@ def test_search_with_decay_and_boost(store):
     assert rows[0]["score"] > rows[1]["score"]
 
     # Verify that searching incremented the recall count
-    with psycopg.connect(s._dsn) as conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT metadata FROM memory_entries WHERE id = %s", (id_new,))
-            meta = cur.fetchone()[0] or {}
-            assert int(meta.get("recall_count", 0)) == 1
+    with psycopg.connect(s._dsn) as conn, conn.cursor() as cur:
+        cur.execute("SELECT metadata FROM memory_entries WHERE id = %s", (id_new,))
+        meta = cur.fetchone()[0] or {}
+        assert int(meta.get("recall_count", 0)) == 1
 
 
 def test_search_turns_with_decay_and_boost(store_with_turn_cleanup):
@@ -488,17 +483,17 @@ def test_search_turns_with_decay_and_boost(store_with_turn_cleanup):
     )
 
     # Backdate old turn by 10 days
-    import psycopg
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timedelta
 
-    old_time = datetime.now(timezone.utc) - timedelta(days=10)
-    with psycopg.connect(s._dsn) as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "UPDATE conversations SET ts = %s WHERE id = %s",
-                (old_time, id_old),
-            )
-            conn.commit()
+    import psycopg
+
+    old_time = datetime.now(UTC) - timedelta(days=10)
+    with psycopg.connect(s._dsn) as conn, conn.cursor() as cur:
+        cur.execute(
+            "UPDATE conversations SET ts = %s WHERE id = %s",
+            (old_time, id_old),
+        )
+        conn.commit()
 
     # Search turns with decay. The new turn should score higher.
     rows = s.search_turns(
@@ -509,11 +504,10 @@ def test_search_turns_with_decay_and_boost(store_with_turn_cleanup):
     assert rows[0]["score"] > rows[1]["score"]
 
     # Verify that search_turns incremented the recall count
-    with psycopg.connect(s._dsn) as conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT metadata FROM conversations WHERE id = %s", (id_new,))
-            meta = cur.fetchone()[0] or {}
-            assert int(meta.get("recall_count", 0)) == 1
+    with psycopg.connect(s._dsn) as conn, conn.cursor() as cur:
+        cur.execute("SELECT metadata FROM conversations WHERE id = %s", (id_new,))
+        meta = cur.fetchone()[0] or {}
+        assert int(meta.get("recall_count", 0)) == 1
 
 
 def test_cleanup_stale_records(store_with_turn_cleanup):
@@ -535,30 +529,27 @@ def test_cleanup_stale_records(store_with_turn_cleanup):
     )
 
     # Backdate old turn by 10 days
-    import psycopg
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timedelta
 
-    old_time = datetime.now(timezone.utc) - timedelta(days=10)
-    with psycopg.connect(s._dsn) as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "UPDATE conversations SET ts = %s WHERE id = %s",
-                (old_time, id_old_conv),
-            )
-            conn.commit()
+    import psycopg
+
+    old_time = datetime.now(UTC) - timedelta(days=10)
+    with psycopg.connect(s._dsn) as conn, conn.cursor() as cur:
+        cur.execute(
+            "UPDATE conversations SET ts = %s WHERE id = %s",
+            (old_time, id_old_conv),
+        )
+        conn.commit()
 
     # Clean up records older than 5 days
     res = s.cleanup_stale_records(conversations_ttl_days=5)
     assert res["conversations"] == 1
 
-    with psycopg.connect(s._dsn) as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "SELECT id FROM conversations WHERE agent_identity = %s", (agent,)
-            )
-            remaining = [r[0] for r in cur.fetchall()]
-            assert id_old_conv not in remaining
-            assert id_new_conv in remaining
+    with psycopg.connect(s._dsn) as conn, conn.cursor() as cur:
+        cur.execute("SELECT id FROM conversations WHERE agent_identity = %s", (agent,))
+        remaining = [r[0] for r in cur.fetchall()]
+        assert id_old_conv not in remaining
+        assert id_new_conv in remaining
 
 
 def test_search_with_platform_filter(store):
@@ -614,22 +605,21 @@ def test_entity_tagging_and_graph(store):
     # 1. Verify entity tagging extracted entities automatically
     import psycopg
 
-    with psycopg.connect(s._dsn) as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "SELECT metadata FROM memory_entries WHERE agent_identity = %s",
-                (agent,),
-            )
-            rows = cur.fetchall()
-            all_entities = []
-            for r in rows:
-                meta = r[0] or {}
-                entities = meta.get("entities", [])
-                all_entities.extend(entities)
+    with psycopg.connect(s._dsn) as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT metadata FROM memory_entries WHERE agent_identity = %s",
+            (agent,),
+        )
+        rows = cur.fetchall()
+        all_entities = []
+        for r in rows:
+            meta = r[0] or {}
+            entities = meta.get("entities", [])
+            all_entities.extend(entities)
 
-            entity_types = [e["type"] for e in all_entities]
-            assert "url" in entity_types
-            assert "file_path" in entity_types
+        entity_types = [e["type"] for e in all_entities]
+        assert "url" in entity_types
+        assert "file_path" in entity_types
 
     # 2. Verify entity_graph co-occurrence
     res = s.entity_graph(
@@ -729,19 +719,18 @@ def test_append_turn_entity_extraction(store):
     # Verify entities are extracted in metadata
     import psycopg
 
-    with psycopg.connect(s._dsn) as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "SELECT metadata FROM conversations WHERE session_id = %s",
-                (session_id,),
-            )
-            row = cur.fetchone()
-            assert row is not None
-            meta = row[0] or {}
-            entities = meta.get("entities", [])
-            types = [e["type"] for e in entities]
-            assert "url" in types
-            assert "file_path" in types
+    with psycopg.connect(s._dsn) as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT metadata FROM conversations WHERE session_id = %s",
+            (session_id,),
+        )
+        row = cur.fetchone()
+        assert row is not None
+        meta = row[0] or {}
+        entities = meta.get("entities", [])
+        types = [e["type"] for e in entities]
+        assert "url" in types
+        assert "file_path" in types
 
 
 def test_headroom_compression_and_retrieve(store):
@@ -823,10 +812,11 @@ def test_score_blending(store):
     )
 
     # Old entry (decayed)
-    import psycopg
-    from datetime import datetime, timezone, timedelta
+    from datetime import datetime, timedelta
 
-    old_time = datetime.now(timezone.utc) - timedelta(days=10)
+    import psycopg
+
+    old_time = datetime.now(UTC) - timedelta(days=10)
     row_id_2 = s.add(
         agent_identity=agent,
         target="memory",
@@ -834,13 +824,12 @@ def test_score_blending(store):
         embedding=vec,
     )
     # Manually backdate created_at and updated_at
-    with psycopg.connect(s._dsn) as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "UPDATE memory_entries SET created_at = %s, updated_at = %s WHERE id = %s",
-                (old_time, old_time, row_id_2),
-            )
-            conn.commit()
+    with psycopg.connect(s._dsn) as conn, conn.cursor() as cur:
+        cur.execute(
+            "UPDATE memory_entries SET created_at = %s, updated_at = %s WHERE id = %s",
+            (old_time, old_time, row_id_2),
+        )
+        conn.commit()
 
     # Query with hybrid search and decay_half_life_days active
     results = s.hybrid_search(
@@ -898,7 +887,7 @@ def test_plugin_memory_stats(store):
     with patch("hexus.MemoryProvider", new=object):
         from hexus import HexusMemoryProvider
 
-        s, agent = store
+        s, _agent = store
 
         # Mock/fake config for HexusMemoryProvider
         provider = HexusMemoryProvider(

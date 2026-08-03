@@ -21,12 +21,11 @@ works with:
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, Optional, List
+import os
+from typing import Any
 
 from hexus.store import MemoryStore
 
-
-import os
 from . import tools
 
 logger = logging.getLogger(__name__)
@@ -35,6 +34,7 @@ logger = logging.getLogger(__name__)
 def _generate_metrics(store: MemoryStore) -> str:
     """Generate Prometheus metrics from DB and AsyncWriter status."""
     import math
+
     from hexus.writer import _active_writers
 
     # 1. Base liveness and totals
@@ -57,7 +57,7 @@ def _generate_metrics(store: MemoryStore) -> str:
     # 2. Detailed Database Metrics from store.get_metrics_data()
     try:
         db_data = store.get_metrics_data()
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         lines.append(f"# ERROR: Failed to query detailed metrics: {exc}")
         db_data = {}
 
@@ -225,7 +225,7 @@ def _generate_metrics(store: MemoryStore) -> str:
         for obj in _active_writers:
             queue_stats = obj.stats()
             break
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         lines.append(f"# ERROR: Failed to extract writer queue stats: {exc}")
 
     if queue_stats:
@@ -258,7 +258,7 @@ def _generate_metrics(store: MemoryStore) -> str:
             lines.append(f'hexus_writer_latency_seconds{{quantile="0.95"}} {p95}')
 
     # 4. Background Cleanup Stats
-    cleanup_interval = int(os.environ.get("HEXUS_CLEANUP_INTERVAL_HOURS", 24))
+    cleanup_interval = int(os.environ.get("HEXUS_CLEANUP_INTERVAL_HOURS", "24"))
     memories_ttl = os.environ.get("HEXUS_CLEANUP_MEMORIES_TTL_DAYS")
     memories_ttl = int(memories_ttl) if memories_ttl else None
     conversations_ttl = os.environ.get("HEXUS_CLEANUP_CONVERSATIONS_TTL_DAYS")
@@ -303,7 +303,7 @@ def _generate_metrics(store: MemoryStore) -> str:
 
     # 5. Background Consolidation Stats
     consolidation_interval = int(
-        os.environ.get("HEXUS_CONSOLIDATION_INTERVAL_HOURS", 12)
+        os.environ.get("HEXUS_CONSOLIDATION_INTERVAL_HOURS", "12")
     )
     consolidation_thread_alive = any(
         t.name == "hexus-consolidation-thread" for t in threading.enumerate()
@@ -421,7 +421,7 @@ def _build_server(
     store: MemoryStore,
     *,
     name: str = "hexus",
-    instructions: Optional[str] = None,
+    instructions: str | None = None,
 ):
     """Build and return a configured `mcp.server.fastmcp.FastMCP` instance.
 
@@ -433,6 +433,7 @@ def _build_server(
     # Imported lazily so `pip install hexus` (no [mcp] extra)
     # doesn't pull mcp as a transitive runtime dep.
     import os
+
     from mcp.server.fastmcp import FastMCP
 
     if instructions is None:
@@ -471,7 +472,7 @@ def _build_server(
     }
 
     # -- Scheduled Background Cleanup --------------------------------------
-    cleanup_interval = int(os.environ.get("HEXUS_CLEANUP_INTERVAL_HOURS", 24))
+    cleanup_interval = int(os.environ.get("HEXUS_CLEANUP_INTERVAL_HOURS", "24"))
     memories_ttl = os.environ.get("HEXUS_CLEANUP_MEMORIES_TTL_DAYS")
     memories_ttl = int(memories_ttl) if memories_ttl else None
     conversations_ttl = os.environ.get("HEXUS_CLEANUP_CONVERSATIONS_TTL_DAYS")
@@ -526,12 +527,13 @@ def _build_server(
 
     # -- Scheduled Background Consolidation --------------------------------
     consolidation_interval = int(
-        os.environ.get("HEXUS_CONSOLIDATION_INTERVAL_HOURS", 12)
+        os.environ.get("HEXUS_CONSOLIDATION_INTERVAL_HOURS", "12")
     )
 
     if consolidation_interval > 0:
         import threading
         import time
+
         from hexus.writer import _active_writers
 
         def background_consolidation_loop():
@@ -606,7 +608,7 @@ def _build_server(
                             res_co,
                         )
                         break  # Success
-                    except Exception as exc:
+                    except Exception as exc:  # noqa: BLE001
                         logger.error(
                             "Error during scheduled background consolidation (attempt %d/%d): %s",
                             attempt,
@@ -629,7 +631,7 @@ def _build_server(
     # -- tools -------------------------------------------------------------
 
     @mcp.tool()
-    def memory_health() -> Dict[str, Any]:
+    def memory_health() -> dict[str, Any]:
         """Liveness + capability check. Returns DB status, embedder model/dim, row counts."""
         return tools.memory_health(store, {})
 
@@ -638,10 +640,10 @@ def _build_server(
         contents: list[str],
         target: str = "memory",
         agent_identity: str = "",
-        metadata: Optional[Dict[str, Any]] = None,
+        metadata: dict[str, Any] | None = None,
         doc_type: str = "memory",
         source_url: str = "",
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Add one or many memory entries. Each content becomes one row.
 
         Args:
@@ -682,9 +684,9 @@ def _build_server(
         target: str = "",
         min_similarity: float = 0.0,
         min_confidence: float = 0.0,
-        decay_half_life_days: Optional[float] = None,
-        recall_boost_weight: Optional[float] = None,
-    ) -> Dict[str, Any]:
+        decay_half_life_days: float | None = None,
+        recall_boost_weight: float | None = None,
+    ) -> dict[str, Any]:
         """Semantic search over memory entries.
 
         Args:
@@ -725,9 +727,9 @@ def _build_server(
         target: str = "",
         min_similarity: float = 0.0,
         min_confidence: float = 0.0,
-        decay_half_life_days: Optional[float] = None,
-        recall_boost_weight: Optional[float] = None,
-    ) -> Dict[str, Any]:
+        decay_half_life_days: float | None = None,
+        recall_boost_weight: float | None = None,
+    ) -> dict[str, Any]:
         """Hybrid search blending semantic vector search and full-text search over memory entries.
 
         Args:
@@ -768,7 +770,7 @@ def _build_server(
         target: str = "",
         limit: int = 20,
         offset: int = 0,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Browse memory entries without semantic search (list / paginate).
 
         Returns: {"count", "limit", "offset", "rows": [...]}
@@ -788,7 +790,7 @@ def _build_server(
         id: int,
         confirm: bool = False,
         agent_identity: str = "",
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Delete a memory entry by id. Pass confirm=true to actually delete.
 
         Dry-run by default (returns what would happen). Restricted to the
@@ -811,9 +813,9 @@ def _build_server(
         agent_identity: str = "",
         session_id: str = "",
         min_similarity: float = 0.0,
-        decay_half_life_days: Optional[float] = None,
-        recall_boost_weight: Optional[float] = None,
-    ) -> Dict[str, Any]:
+        decay_half_life_days: float | None = None,
+        recall_boost_weight: float | None = None,
+    ) -> dict[str, Any]:
         """Semantic search over past chat turns (every user/assistant exchange).
 
         Args:
@@ -851,9 +853,9 @@ def _build_server(
         agent_identity: str = "",
         session_id: str = "",
         min_similarity: float = 0.0,
-        decay_half_life_days: Optional[float] = None,
-        recall_boost_weight: Optional[float] = None,
-    ) -> Dict[str, Any]:
+        decay_half_life_days: float | None = None,
+        recall_boost_weight: float | None = None,
+    ) -> dict[str, Any]:
         """Hybrid search blending semantic vector search and full-text search over conversation turns.
 
         Args:
@@ -893,8 +895,8 @@ def _build_server(
         role: str,
         content: str,
         agent_identity: str = "",
-        metadata: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """Append one chat turn. Use this to capture a (user, assistant)
         exchange into the conversation log for later semantic recall.
 
@@ -925,8 +927,8 @@ def _build_server(
         task: str,
         result: str,
         agent_identity: str = "",
-        metadata: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """Record a subagent delegation.
 
         Args:
@@ -960,7 +962,7 @@ def _build_server(
         min_similarity: float = 0.0,
         decay_half_life_days: float = 0.0,
         recall_boost_weight: float = 0.0,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Recall subagent delegations by semantic similarity query.
 
         Args:
@@ -992,7 +994,7 @@ def _build_server(
         agent_identity: str = "",
         target: str = "",
         session_id: str = "",
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Return row counts for memory_entries and conversations, scoped as requested.
 
         Args:
@@ -1013,11 +1015,11 @@ def _build_server(
 
     @mcp.tool()
     def memory_cleanup(
-        conversations_ttl_days: Optional[int] = None,
-        memories_ttl_days: Optional[int] = None,
-        delegations_ttl_days: Optional[int] = None,
+        conversations_ttl_days: int | None = None,
+        memories_ttl_days: int | None = None,
+        delegations_ttl_days: int | None = None,
         confirm: bool = False,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Delete stale records from conversations, memory_entries, and delegations based on TTL.
 
         This is a **fleet-wide, unscoped** destructive operation — it deletes
@@ -1060,7 +1062,7 @@ def _build_server(
     @mcp.tool()
     def memory_consolidate(
         agent_identity: str = "",
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Trigger memory consolidation for low-confidence or heavily co-occurring entries.
 
         Args:
@@ -1114,7 +1116,7 @@ def _build_server(
         entity_value: str,
         agent_identity: str = "",
         limit: int = 5,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Find other entities that co-occur with a target entity.
 
         Args:
@@ -1140,7 +1142,7 @@ def _build_server(
         agent_identity: str = "",
         max_depth: int = 2,
         limit: int = 5,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Traverse the co-occurrence graph up to N hops away from a start entity.
 
         Args:
@@ -1166,7 +1168,7 @@ def _build_server(
         agent_identity: str = "",
         min_strength: int = 2,
         limit: int = 10,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Retrieve clusters/cliques of heavily co-occurring entities.
 
         Args:
@@ -1184,7 +1186,7 @@ def _build_server(
         )
 
     @mcp.tool()
-    def memory_confirm(id: int) -> Dict[str, Any]:
+    def memory_confirm(id: int) -> dict[str, Any]:
         """Increment confirm_count in metadata JSONB for the given entry ID.
 
         Args:
@@ -1198,7 +1200,7 @@ def _build_server(
         )
 
     @mcp.tool()
-    def memory_reject(id: int) -> Dict[str, Any]:
+    def memory_reject(id: int) -> dict[str, Any]:
         """Increment reject_count in metadata JSONB for the given entry ID.
 
         Args:
@@ -1215,7 +1217,7 @@ def _build_server(
     def memory_summarize_session(
         session_id: str,
         limit: int = 5,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Compute the vector centroid of a session's turns and find the K closest turns.
 
         Args:
@@ -1231,7 +1233,7 @@ def _build_server(
         )
 
     @mcp.tool()
-    def memory_retrieve(id: int) -> Dict[str, Any]:
+    def memory_retrieve(id: int) -> dict[str, Any]:
         """Retrieve the original full content of a memory entry by its integer ID.
 
         Args:
@@ -1245,7 +1247,7 @@ def _build_server(
         )
 
     @mcp.tool()
-    def headroom_retrieve(id: int) -> Dict[str, Any]:
+    def headroom_retrieve(id: int) -> dict[str, Any]:
         """Retrieve the original full content of a memory entry by its integer ID.
 
         Args:
@@ -1259,24 +1261,153 @@ def _build_server(
         )
 
     @mcp.tool()
-    def memory_stats() -> Dict[str, Any]:
+    def memory_stats() -> dict[str, Any]:
         """Return metrics from Hexus database and background async queue stats."""
         return tools.memory_stats(store, {})
 
-    # -- patch ASGI app for Prometheus /metrics endpoint -------------------
+    # -- patch ASGI app for REST API + Prometheus /metrics endpoint -------------------
     _orig_get_asgi_app = mcp.streamable_http_app
 
-    def get_asgi_app_with_metrics(*args, **kwargs):
+    def get_asgi_app_with_rest_api(*args, **kwargs):
         app = _orig_get_asgi_app(*args, **kwargs)
-        from starlette.responses import Response
-        from . import tools
+        from starlette.requests import Request
+        from starlette.responses import JSONResponse, Response
 
         tools.http_transport_active = True
 
-        async def metrics(request):
-            return Response(_generate_metrics(store), media_type="text/plain")
+        async def health(request):
+            """Health check endpoint for pi extension and other clients."""
+            try:
+                result = tools.memory_health(store, {})
+                return JSONResponse(result)
+            except Exception as exc:  # noqa: BLE001
+                return JSONResponse(
+                    {"status": "error", "error": str(exc)}, status_code=500
+                )
 
-        app.add_route("/metrics", metrics)
+        async def recall(request: Request):
+            """Semantic search over memory entries.
+
+            POST /api/recall
+            Body: {"query": str, "top_k"?: int, "agent_identity"?: str,
+                   "target"?: "memory"|"user", "min_similarity"?: float}
+            Returns: {"query", "count", "results": [...]}
+            """
+            try:
+                body = await request.json()
+            except ValueError:
+                return JSONResponse({"error": "invalid JSON body"}, status_code=400)
+
+            try:
+                result = tools.memory_recall(store, body)
+                if "error" in result:
+                    return JSONResponse(result, status_code=400)
+                return JSONResponse(result)
+            except Exception as exc:  # noqa: BLE001
+                return JSONResponse({"error": str(exc)}, status_code=500)
+
+        async def retain(request: Request):
+            """Store one or more memory entries.
+
+            POST /api/retain
+            Body (new simplified): {"contents": [str], "target"?: str, "metadata"?: dict, "agent_identity"?: str}
+            Body (legacy): {"contents": [{"content": str, "target"?: str, "metadata"?: dict}], "agent_identity"?: str}
+            Returns: {"inserted", "duplicates", "errors"}
+            """
+            try:
+                body = await request.json()
+            except ValueError:
+                return JSONResponse({"error": "invalid JSON body"}, status_code=400)
+
+            contents = body.get("contents", [])
+            agent_identity = body.get("agent_identity")
+            target = body.get("target")
+            metadata = body.get("metadata")
+
+            if not isinstance(contents, list) or not contents:
+                return JSONResponse(
+                    {"error": "contents must be a non-empty list"}, status_code=400
+                )
+
+            # Normalize: support both string[] (new) and {content}[] (legacy)
+            flat_contents = []
+            flat_metas = []
+            flat_targets = []
+            for item in contents:
+                if isinstance(item, str):
+                    flat_contents.append(item)
+                    flat_metas.append(metadata)
+                    flat_targets.append(target)
+                elif isinstance(item, dict):
+                    c = item.get("content")
+                    if not isinstance(c, str):
+                        return JSONResponse(
+                            {
+                                "error": "contents items must be strings or contain a 'content' key with a string value"
+                            },
+                            status_code=400,
+                        )
+                    flat_contents.append(c)
+                    # Per-item target/metadata win over the shared defaults.
+                    # Use `is not None` (not `or`) so empty dict {} / empty
+                    # string targets are preserved rather than silently dropped.
+                    item_target = item.get("target")
+                    flat_targets.append(
+                        item_target if item_target is not None else target
+                    )
+                    item_meta = item.get("metadata")
+                    flat_metas.append(item_meta if item_meta is not None else metadata)
+                else:
+                    return JSONResponse(
+                        {"error": "contents items must be strings or objects"},
+                        status_code=400,
+                    )
+
+            args = {
+                "contents": flat_contents,
+                "targets": flat_targets,
+                "metadata": flat_metas,
+            }
+            if agent_identity:
+                args["agent_identity"] = agent_identity
+
+            try:
+                result = tools.memory_retain(store, args)
+                return JSONResponse(result)
+            except Exception as exc:  # noqa: BLE001
+                return JSONResponse({"error": str(exc)}, status_code=500)
+
+        async def append_turn(request: Request):
+            """Store a conversation turn.
+
+            POST /api/append-turn
+            Body: {"session_id": str, "role": str, "content": str,
+                   "agent_identity"?: str, "metadata"?: dict}
+            Returns: {"id", "session_id", "role"}
+            """
+            try:
+                body = await request.json()
+            except ValueError:
+                return JSONResponse({"error": "invalid JSON body"}, status_code=400)
+
+            try:
+                result = tools.memory_append_turn(store, body)
+                if "error" in result:
+                    return JSONResponse(result, status_code=400)
+                return JSONResponse(result)
+            except Exception as exc:  # noqa: BLE001
+                return JSONResponse({"error": str(exc)}, status_code=500)
+
+        async def metrics(request):
+            # Plain text, NOT JSONResponse — JSONResponse would quote/escape the
+            # whole payload and break Prometheus scraping.
+            return Response(content=_generate_metrics(store), media_type="text/plain")
+
+        app.add_route("/api/health", health, ["GET"])
+        app.add_route("/api/recall", recall, ["POST"])
+        app.add_route("/api/retain", retain, ["POST"])
+        app.add_route("/api/append-turn", append_turn, ["POST"])
+        app.add_route("/metrics", metrics, ["GET"])
 
         # Optional bearer-token auth on the HTTP transport. When
         # HEXUS_API_TOKEN is set, every HTTP request (MCP calls + /metrics)
@@ -1302,7 +1433,7 @@ def _build_server(
         )
         return app
 
-    mcp.streamable_http_app = get_asgi_app_with_metrics
+    mcp.streamable_http_app = get_asgi_app_with_rest_api
 
     return mcp
 
@@ -1311,7 +1442,7 @@ def build_server(
     dsn: str,
     *,
     name: str = "hexus",
-    instructions: Optional[str] = None,
+    instructions: str | None = None,
 ) -> Any:
     """Build (but don't run) an MCP server for the given DSN.
 

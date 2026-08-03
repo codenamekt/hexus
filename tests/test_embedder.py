@@ -15,11 +15,9 @@ from __future__ import annotations
 
 import os
 import threading
-from typing import List
 from unittest.mock import patch
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Structural / fast tests — no model load
@@ -29,7 +27,7 @@ import pytest
 def test_constants():
     """The public constants are pinned to the values the rest of the
     code (and the schema migration) assume."""
-    from hexus.embedder import DEFAULT_MODEL, DEFAULT_DIM
+    from hexus.embedder import DEFAULT_DIM, DEFAULT_MODEL
 
     assert DEFAULT_MODEL == "sentence-transformers/all-MiniLM-L6-v2"
     assert DEFAULT_DIM == 384
@@ -134,7 +132,7 @@ def test_singleton_is_thread_safe():
     from hexus.embedder import get_default_embedder, reset_default_embedder
 
     reset_default_embedder()
-    instances: List = []
+    instances: list = []
     barrier = threading.Barrier(8)
 
     def grab():
@@ -226,7 +224,7 @@ def _embedder_with_model(mode, max_seq=8):
 
 
 def test_long_text_mode_default_is_warn():
-    from hexus.embedder import LocalBertEmbedder, DEFAULT_LONG_TEXT_MODE
+    from hexus.embedder import DEFAULT_LONG_TEXT_MODE, LocalBertEmbedder
 
     assert LocalBertEmbedder().long_text_mode == DEFAULT_LONG_TEXT_MODE == "warn"
 
@@ -244,6 +242,7 @@ def test_long_text_mode_env_override(monkeypatch):
 
 def test_long_text_mode_invalid_falls_back(caplog):
     import logging
+
     from hexus.embedder import LocalBertEmbedder
 
     with caplog.at_level(logging.WARNING, logger="hexus.embedder"):
@@ -586,9 +585,10 @@ def test_embed_truncates_long_text():
 def test_embed_http_404_raises_embedding_error():
     """The HTTP path raises EmbeddingError on a non-2xx response, not
     a urllib.error.HTTPError leaking out."""
+    import urllib.error
+
     from hexus import embed as embed_fn
     from hexus.embed import EmbeddingError
-    import urllib.error
 
     with patch("urllib.request.urlopen") as urlopen:
         urlopen.side_effect = urllib.error.HTTPError(

@@ -1,6 +1,8 @@
 import os
-import pytest
+
 import psycopg
+import pytest
+
 from hexus.store import MemoryStore
 
 # Skip the whole module if there's no DSN to talk to.
@@ -16,11 +18,10 @@ def clean_db():
     if not dsn:
         pytest.skip("PG_TEST_DSN not set")
 
-    with psycopg.connect(dsn, autocommit=True) as conn:
-        with conn.cursor() as cur:
-            cur.execute("DROP TABLE IF EXISTS delegations CASCADE;")
-            cur.execute("DROP TABLE IF EXISTS conversations CASCADE;")
-            cur.execute("DROP TABLE IF EXISTS memory_entries CASCADE;")
+    with psycopg.connect(dsn, autocommit=True) as conn, conn.cursor() as cur:
+        cur.execute("DROP TABLE IF EXISTS delegations CASCADE;")
+        cur.execute("DROP TABLE IF EXISTS conversations CASCADE;")
+        cur.execute("DROP TABLE IF EXISTS memory_entries CASCADE;")
 
     # Re-apply migrations using apply_migration_as_admin
     s = MemoryStore(dsn)
@@ -39,25 +40,24 @@ def test_quantization_float16_adaptation(clean_db, monkeypatch):
     store.ensure_schema()  # This calls adapt_vector_precision()
 
     # 1. Verify column type is halfvec(384)
-    with store._get_pool().connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute("""
+    with store._get_pool().connection() as conn, conn.cursor() as cur:
+        cur.execute("""
                 SELECT pg_catalog.format_type(atttypid, atttypmod)
                 FROM pg_catalog.pg_attribute
                 WHERE attrelid = 'memory_entries'::regclass
                   AND attname = 'embedding';
             """)
-            col_type = cur.fetchone()[0]
-            assert col_type == "halfvec(384)"
+        col_type = cur.fetchone()[0]
+        assert col_type == "halfvec(384)"
 
-            cur.execute("""
+        cur.execute("""
                 SELECT pg_catalog.format_type(atttypid, atttypmod)
                 FROM pg_catalog.pg_attribute
                 WHERE attrelid = 'conversations'::regclass
                   AND attname = 'embedding';
             """)
-            conv_col_type = cur.fetchone()[0]
-            assert conv_col_type == "halfvec(384)"
+        conv_col_type = cur.fetchone()[0]
+        assert conv_col_type == "halfvec(384)"
 
     # 2. Verify we can insert and search successfully
     agent = "test-agent-float16"
@@ -80,22 +80,21 @@ def test_quantization_binary_adaptation(clean_db, monkeypatch):
     store.ensure_schema()  # This calls adapt_vector_precision()
 
     # 1. Verify binary index exists
-    with store._get_pool().connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute("""
+    with store._get_pool().connection() as conn, conn.cursor() as cur:
+        cur.execute("""
                 SELECT indexname FROM pg_indexes 
                 WHERE tablename = 'memory_entries' 
                   AND indexname = 'ix_memory_entries_embedding_binary_hnsw';
             """)
-            assert cur.fetchone() is not None
+        assert cur.fetchone() is not None
 
-            # Verify standard cosine index does NOT exist
-            cur.execute("""
+        # Verify standard cosine index does NOT exist
+        cur.execute("""
                 SELECT indexname FROM pg_indexes 
                 WHERE tablename = 'memory_entries' 
                   AND indexname = 'ix_memory_entries_embedding_hnsw';
             """)
-            assert cur.fetchone() is None
+        assert cur.fetchone() is None
 
     # 2. Verify we can insert and search (using two-stage search) successfully
     agent = "test-agent-binary"

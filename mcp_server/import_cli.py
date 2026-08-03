@@ -6,9 +6,9 @@ import argparse
 import json
 import os
 import sys
-from typing import List, Optional
-from hexus.store import MemoryStore
+
 from hexus.embed import embed
+from hexus.store import MemoryStore
 
 
 def import_mem0(
@@ -26,7 +26,7 @@ def import_mem0(
     try:
         with open(file_path, "r", encoding="utf-8") as f:
             data = json.load(f)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         print(f"ERROR: Failed to parse JSON: {exc}", file=sys.stderr)
         sys.exit(1)
 
@@ -53,7 +53,7 @@ def import_mem0(
 
         try:
             vec = embed(content)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             print(
                 f"Warning: Failed to embed '{content[:40]}...': {exc}. Inserting without embedding."
             )
@@ -71,7 +71,7 @@ def import_mem0(
                 success += 1
             else:
                 skipped += 1
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             print(f"ERROR: Failed to insert item {idx}: {exc}", file=sys.stderr)
             errors += 1
 
@@ -93,7 +93,7 @@ def import_honcho(
     try:
         with open(file_path, "r", encoding="utf-8") as f:
             data = json.load(f)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         print(f"ERROR: Failed to parse JSON: {exc}", file=sys.stderr)
         sys.exit(1)
 
@@ -121,7 +121,7 @@ def import_honcho(
 
         try:
             vec = embed(content)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             print(
                 f"Warning: Failed to embed '{content[:40]}...': {exc}. Inserting without embedding."
             )
@@ -139,7 +139,7 @@ def import_honcho(
                 success += 1
             else:
                 skipped += 1
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             print(f"ERROR: Failed to insert item {idx}: {exc}", file=sys.stderr)
             errors += 1
 
@@ -160,7 +160,7 @@ def import_holographic(
     try:
         with open(file_path, "r", encoding="utf-8") as f:
             data = json.load(f)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         print(f"ERROR: Failed to parse JSON: {exc}", file=sys.stderr)
         sys.exit(1)
 
@@ -188,7 +188,7 @@ def import_holographic(
 
         try:
             vec = embed(content)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             print(
                 f"Warning: Failed to embed '{content[:40]}...': {exc}. Inserting without embedding."
             )
@@ -206,7 +206,7 @@ def import_holographic(
                 success += 1
             else:
                 skipped += 1
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             print(f"ERROR: Failed to insert item {idx}: {exc}", file=sys.stderr)
             errors += 1
 
@@ -234,12 +234,12 @@ def import_markdown(
         print(
             f"Import complete: {res['inserted']} inserted, {res['skipped']} skipped/duplicates (parsed {res['parsed']} total)."
         )
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         print(f"ERROR: Bulk import failed: {exc}", file=sys.stderr)
         sys.exit(1)
 
 
-def main(argv: Optional[List[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="hexus-import",
         description="Bulk import tool for Hexus memory store.",

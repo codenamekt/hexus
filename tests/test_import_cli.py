@@ -1,6 +1,8 @@
 import json
-import pytest
 from unittest.mock import MagicMock
+
+import pytest
+
 from hexus.store import MemoryStore
 from mcp_server.import_cli import main
 
