@@ -46,7 +46,7 @@ export interface AppendTurnResponse {
 }
 
 class HexusClient {
-  private baseUrl: string;
+  readonly baseUrl: string;
   private healthCache: { data: HealthResponse | null; expiry: number } = { data: null, expiry: 0 };
   private offlineUntil = 0; // Unix ms; skip requests when offline
 
@@ -164,8 +164,13 @@ class HexusClient {
 let _client: HexusClient | undefined;
 
 export function getClient(): HexusClient {
+  const config = getConfig();
   if (!_client) {
-    const config = getConfig();
+    _client = new HexusClient(config.apiUrl);
+  } else if (_client.baseUrl !== config.apiUrl.replace(/\/$/, "")) {
+    // Config loaded asynchronously after the client was first created
+    // (getConfig() returns defaults until initConfig() resolves), so the
+    // singleton may hold a stale URL — rebuild it with the real one.
     _client = new HexusClient(config.apiUrl);
   }
   return _client;

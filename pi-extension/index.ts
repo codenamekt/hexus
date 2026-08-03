@@ -97,7 +97,7 @@ function buildConversationText(entries: any[]): string {
   const sections: string[] = [];
   for (const e of entries) {
     if (e.type !== "message" || !["user", "assistant"].includes(e.message?.role)) continue;
-    const texts = extractText(e.message.content);
+    const texts = extractText(e.message?.content ?? []);
     if (texts.length) {
       sections.push(`${e.message.role === "user" ? "User" : "Assistant"}: ${texts.join("\n")}`);
     }
@@ -155,7 +155,12 @@ export default function hexus(pi: ExtensionAPI) {
     ctx.ui.notify("Running session reflection...", "info");
 
     try {
-      const [provider, modelId] = reflConfig.model.split("/");
+      // Split on the FIRST "/" only — model IDs can contain their own "/"
+      // (e.g. "headroom/tobiTradez/minimax-m2.7-highspeed") and a missing
+      // separator must not yield an undefined modelId.
+      const slashIdx = reflConfig.model.indexOf("/");
+      const provider = slashIdx > 0 ? reflConfig.model.slice(0, slashIdx) : "headroom";
+      const modelId = slashIdx > 0 ? reflConfig.model.slice(slashIdx + 1) : reflConfig.model;
       let model = ctx.modelRegistry.find(provider, modelId);
       if (!model) {
         // Model not found — refresh registry in case litellm is still loading
@@ -300,7 +305,7 @@ export default function hexus(pi: ExtensionAPI) {
 
     try {
       const health = await client.health().catch(() => null);
-      if (!health?.ok) { ctx.ui.setStatus("hexus", "hexus: offline"); return; }
+      if (health?.status !== "ok") { ctx.ui.setStatus("hexus", "hexus: offline"); return; }
       ctx.ui.setStatus("hexus", `hexus: ${health.row_counts.memory_entries} memories`);
 
       const recall = await client.recall({
@@ -404,6 +409,9 @@ export default function hexus(pi: ExtensionAPI) {
   });
 
   pi.on("session_shutdown", () => {
-    if (idleTimer) clearTimeout(idleTimer);
+    if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
+    // Reset in-flight state so a new session starts clean
+    isReflecting = false;
+    recallInFlight = false;
   });
 }

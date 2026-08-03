@@ -1,0 +1,11 @@
+{
+  "name": "hexus",
+  "version": "0.1.0",
+  "description": "hexus — Vector memory extension for pi",
+  "dependencies": {
+    "typebox": "^1.0.0"
+  },
+  "pi": {
+    "extensions": ["./index.ts"]
+  }
+}

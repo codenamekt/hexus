@@ -1271,14 +1271,17 @@ def _build_server(
     def get_asgi_app_with_rest_api(*args, **kwargs):
         app = _orig_get_asgi_app(*args, **kwargs)
         from starlette.requests import Request
-        from starlette.responses import JSONResponse
+        from starlette.responses import JSONResponse, Response
 
         tools.http_transport_active = True
 
         async def health(request):
             """Health check endpoint for pi extension and other clients."""
-            result = tools.memory_health(store, {})
-            return JSONResponse(result)
+            try:
+                result = tools.memory_health(store, {})
+                return JSONResponse(result)
+            except Exception as exc:  # noqa: BLE001
+                return JSONResponse({"status": "error", "error": str(exc)}, status_code=500)
 
         async def recall(request: Request):
             """Semantic search over memory entries.
@@ -1298,7 +1301,7 @@ def _build_server(
                 if "error" in result:
                     return JSONResponse(result, status_code=400)
                 return JSONResponse(result)
-            except (ValueError, KeyError, TypeError) as exc:
+            except Exception as exc:  # noqa: BLE001
                 return JSONResponse({"error": str(exc)}, status_code=500)
 
         async def retain(request: Request):
@@ -1360,7 +1363,7 @@ def _build_server(
             try:
                 result = tools.memory_retain(store, args)
                 return JSONResponse(result)
-            except (ValueError, KeyError, TypeError) as exc:
+            except Exception as exc:  # noqa: BLE001
                 return JSONResponse({"error": str(exc)}, status_code=500)
 
         async def append_turn(request: Request):
@@ -1381,11 +1384,13 @@ def _build_server(
                 if "error" in result:
                     return JSONResponse(result, status_code=400)
                 return JSONResponse(result)
-            except (ValueError, KeyError, TypeError) as exc:
+            except Exception as exc:  # noqa: BLE001
                 return JSONResponse({"error": str(exc)}, status_code=500)
 
         async def metrics(request):
-            return JSONResponse(_generate_metrics(store), media_type="text/plain")
+            # Plain text, NOT JSONResponse — JSONResponse would quote/escape the
+            # whole payload and break Prometheus scraping.
+            return Response(content=_generate_metrics(store), media_type="text/plain")
 
         app.add_route("/api/health", health, ["GET"])
         app.add_route("/api/recall", recall, ["POST"])
